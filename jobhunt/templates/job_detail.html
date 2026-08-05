@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_meter.html" import meter %}
+{% block title %}{{ j.title }} — jobhunt{% endblock %}
+{% block body %}
+<p class="eyebrow"><a href="{{ url_for('jobs') }}">← Jobs</a></p>
+<h1>{{ j.title }}</h1>
+<p class="jm" style="margin-bottom:16px"><em>{{ j.company }}</em>
+   {% if j.location %} · {{ j.location }}{% endif %} ·
+   <a href="{{ j.url }}" target="_blank" rel="noopener">Open the posting ↗</a></p>
+
+<div class="panel">
+  <h2>Score breakdown</h2>
+  {{ meter(j.score, j.screen_status == 'pass') }}
+  <table style="margin-top:12px">
+    <tr><td class="mono">Keyword match</td><td class="mono">{{ '%.0f%%' % ((j.keyword_score or 0)*100) }}</td></tr>
+    <tr><td class="mono">Resume similarity</td><td class="mono">{{ '%.3f' % (j.resume_similarity or 0) }}</td></tr>
+    <tr><td class="mono">Title match</td><td class="mono">{{ '%.0f%%' % ((j.title_score or 0)*100) }}</td></tr>
+    <tr><td class="mono">Screening</td><td class="mono">
+      {% if j.screen_status == 'pass' %}<span class="chip ok">eligible</span>
+      {% else %}<span class="why">{{ j.screen_reason }}</span>{% endif %}</td></tr>
+  </table>
+</div>
+
+{% if variant_scores|length > 1 %}
+<div class="panel">
+  <h2>Which resume to send</h2>
+  <p class="hint">Each variant scored against this posting. Only the resume-similarity
+     arm differs — keyword and title matching are identical across variants.</p>
+  <table style="margin-top:12px">
+    {% for name, sc in variant_scores|dictsort(by='value', reverse=true) %}
+    <tr>
+      <td class="mono">{{ name }}
+        {% if name == j.best_variant %}<span class="chip ok">send this</span>{% endif %}</td>
+      <td class="mono">{{ '%.0f' % sc }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Requirement coverage — {{ '%.0f%%' % (coverage*100) }}</h2>
+  <p class="hint">Technologies named in this posting's requirements section, checked against your resume.</p>
+  <p class="kw">
+    {% for t in have %}<code class="hit">{{ t }}</code>{% endfor %}
+    {% for t in missing %}<code>{{ t }}</code>{% endfor %}
+    {% if not have and not missing %}<span class="hint">No requirements section found in this posting.</span>{% endif %}
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Track</h2>
+  <form method="post" action="{{ url_for('track', job_id=j.id) }}" class="actions">
+    <select name="status" style="max-width:180px">
+      {% for s in ['interested','applied','interview','offer','rejected','skip'] %}
+      <option value="{{ s }}" {{ 'selected' if j.app_status == s }}>{{ s }}</option>{% endfor %}
+    </select>
+    <input type="text" name="notes" placeholder="notes" value="{{ j.notes or '' }}" style="max-width:320px">
+    <button class="btn" type="submit">Save</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Description</h2>
+  <div style="white-space:pre-wrap;font-size:13px;max-height:460px;overflow-y:auto">{{ j.description }}</div>
+</div>
+{% endblock %}

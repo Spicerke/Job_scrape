@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}jobhunt{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<style>
+  .rail form { margin: 0; }
+  .rail form button {
+    all: unset; display: block; width: 100%; box-sizing: border-box;
+    padding: 8px 20px; color: #aab4c2; font-family: var(--mono);
+    font-size: 12px; letter-spacing: .04em; cursor: pointer;
+    border-left: 3px solid transparent;
+  }
+  .rail form button:hover { color: #fff; background: rgba(255,255,255,.05); }
+  .rail form button:disabled { color: #566270; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="rail">
+    <div class="brand">jobhunt<span>{{ cfg.profile.name if cfg and cfg.profile and cfg.profile.name else 'job console' }}</span></div>
+
+    <div class="grp">Review</div>
+    <a href="{{ url_for('jobs') }}" class="{{ 'on' if request.endpoint in ('jobs','job_detail') }}">Jobs</a>
+    <a href="{{ url_for('activity') }}" class="{{ 'on' if request.endpoint == 'activity' }}">Activity</a>
+
+    <div class="grp">Configure</div>
+    <a href="{{ url_for('settings') }}" class="{{ 'on' if request.endpoint == 'settings' }}">Settings</a>
+    <a href="{{ url_for('companies') }}" class="{{ 'on' if request.endpoint == 'companies' }}">Companies</a>
+
+    <div class="grp">Run now</div>
+    {% set busy = status and status.running %}
+    <form method="post" action="{{ url_for('run', what='scrape') }}"><button {{ 'disabled' if busy }}>Scrape boards</button></form>
+    <form method="post" action="{{ url_for('run', what='score') }}"><button {{ 'disabled' if busy }}>Re-rank jobs</button></form>
+    <form method="post" action="{{ url_for('run', what='alerts') }}"><button {{ 'disabled' if busy }}>Send alerts</button></form>
+    <form method="post" action="{{ url_for('run', what='digest') }}"><button {{ 'disabled' if busy }}>Send digest</button></form>
+  </nav>
+
+  <main class="main">
+    {% for cat, msg in get_flashed_messages(with_categories=true) %}
+      <div class="flash {{ cat }}">{{ msg }}</div>
+    {% endfor %}
+    {% if status and status.running %}
+      <div class="panel"><span class="live mono">{{ status.running }}</span>
+        {% if status.log %}<div class="log">{{ status.log[-8:] | join('\n') }}</div>{% endif %}
+      </div>
+    {% endif %}
+    {% block body %}{% endblock %}
+  </main>
+</div>
+{% if status and status.running %}<script>setTimeout(function(){location.reload()},5000)</script>{% endif %}
+</body>
+</html>

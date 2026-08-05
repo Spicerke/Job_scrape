@@ -1,0 +1,178 @@
+# ---------------------------------------------------------------------------
+# jobhunt configuration
+# Everything about what you want is in this file. Edit it, then run
+#   python -m jobhunt score --rescore
+# to re-rank the existing database against the new settings.
+# ---------------------------------------------------------------------------
+
+profile:
+  name: Kai Spicer
+  # .tex, .txt, or .pdf (PDF needs `pip install pypdf`)
+  resume_path: resume.tex
+  graduation: 2027-05
+
+search:
+  # Titles you actually want. A full phrase match scores 1.0; partial word
+  # overlap scores proportionally. Keep these lowercase.
+  role_patterns:
+    - software engineer intern
+    - software engineering intern
+    - swe intern
+    - machine learning intern
+    - ml engineer intern
+    - research intern
+    - data science intern
+    - backend engineer intern
+    - new grad software engineer
+    - university graduate software engineer
+    - entry level software engineer
+    - research engineer
+
+  min_score: 45          # floor for the weekly digest
+  instant_min_score: 60  # floor for same-day alerts
+
+  # How the final 0-100 score is composed. Must sum to 1.0.
+  weights:
+    keyword: 0.40
+    resume: 0.35
+    title: 0.25
+
+keywords:
+  # Things on your resume. Weight = how much you want to work with it.
+  skills:
+    python: 3
+    pytorch: 3
+    machine learning: 3
+    deep learning: 2
+    graph neural network: 3
+    computer vision: 2
+    reinforcement learning: 2
+    c: 1
+    java: 2
+    sql: 2
+    postgres: 1
+    react: 2
+    node.js: 1
+    flask: 2
+    fastapi: 2
+    docker: 2
+    git: 1
+    numpy: 2
+    pandas: 2
+    scikit-learn: 2
+    tensorflow: 2
+    data pipeline: 2
+    backend: 2
+    api: 1
+    research: 2
+
+  # Nice-to-haves that push a score up but aren't expected on your resume.
+  bonus:
+    information retrieval: 2
+    llm: 2
+    large language model: 2
+    retrieval: 1
+    embeddings: 1
+    human-in-the-loop: 2
+    annotation: 1
+    autonomous vehicles: 1
+    mobility: 1
+    transportation: 1
+    publication: 1
+    paper: 1
+
+screening:
+  # Reject anything asking for more than this many years of experience.
+  max_years_experience: 2
+
+  # Rejected if any of these appear as a whole word in the TITLE.
+  reject_title_terms:
+    - senior
+    - sr.
+    - staff
+    - principal
+    - lead
+    - director
+    - manager
+    - head
+    - vp
+    - architect
+    - phd
+    - postdoc
+
+  # Rejected if any appear in the job DESCRIPTION.
+  reject_body_terms:
+    - security clearance
+    - top secret
+    - ts/sci
+    - active clearance
+    - polygraph
+    - unpaid
+    - commission only
+    - must have a phd
+
+  # Optional: require at least one of these anywhere in title/description.
+  # Leave empty to disable. Useful to force "intern"-only results.
+  require_any_terms: []
+
+  # Acceptable locations. This matches against the location string only,
+  # so "Mountain View, CA" is NOT caught by "united states" — you need the
+  # city or the state abbreviation. Delete every entry below (leave an empty
+  # list) to accept any location.
+  locations:
+    - new york
+    - nyc
+    - brooklyn
+    - manhattan
+    - ny
+    - boston
+    - ma
+    - san francisco
+    - mountain view
+    - palo alto
+    - sunnyvale
+    - san jose
+    - ca
+    - seattle
+    - wa
+    - austin
+    - tx
+    - chicago
+    - il
+    - united states
+    - usa
+    - remote
+  allow_remote: true
+  min_description_chars: 200
+
+targets:
+  # Any posting from a company flagged `target: true` in companies.yaml
+  # triggers a same-day email instead of waiting for Friday.
+  # Roles below do the same regardless of company.
+  roles:
+    - research scientist intern
+    - machine learning engineer intern
+    - research engineer intern
+
+email:
+  smtp_host: smtp.gmail.com
+  smtp_port: 587
+  username: your.address@gmail.com
+  from_addr: your.address@gmail.com
+  to_addr: kes2246@columbia.edu
+  # The password is read from this environment variable, never stored here.
+  # For Gmail this must be an App Password, not your account password.
+  password_env: JOBHUNT_SMTP_PASSWORD
+  digest_day: friday
+  digest_time: "17:30"
+  lookback_days: 7
+  max_jobs: 40
+
+schedule:
+  # Two pulls a day, local time. Target-company and target-role alerts go out
+  # at the end of each pull, so a watchlist posting reaches you within ~12h
+  # instead of waiting for Friday.
+  scrape_times:
+    - "09:00"
+    - "21:00"
+  enabled: true

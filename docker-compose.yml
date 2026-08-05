@@ -1,0 +1,20 @@
+services:
+  jobhunt:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - jobhunt-data:/data
+    environment:
+      JOBHUNT_DB: /data/jobs.db
+      # Required when the UI is reachable from anywhere but localhost.
+      JOBHUNT_WEB_PASSWORD: ${JOBHUNT_WEB_PASSWORD:?set this in .env}
+      # Keeps you logged in across restarts. Any long random string.
+      JOBHUNT_SECRET_KEY: ${JOBHUNT_SECRET_KEY:?set this in .env}
+      # Gmail App Password, not your account password.
+      JOBHUNT_SMTP_PASSWORD: ${JOBHUNT_SMTP_PASSWORD:?set this in .env}
+      TZ: America/New_York
+
+volumes:
+  jobhunt-data:

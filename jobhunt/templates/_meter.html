@@ -1,0 +1,7 @@
+{% macro meter(score, ok=true) %}
+{% set filled = ((score or 0) / 10) | round(0, 'floor') | int %}
+<div class="meter {{ 'pass' if ok else 'off' }}">
+  {% for i in range(10) %}<i class="{{ 'f' if i < filled }}"></i>{% endfor %}
+  <b>{{ '%.0f' % (score or 0) }}</b>
+</div>
+{% endmacro %}

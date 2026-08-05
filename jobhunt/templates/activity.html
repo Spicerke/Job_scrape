@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Activity — jobhunt{% endblock %}
+{% block body %}
+<p class="eyebrow">Review</p>
+<h1>Activity</h1>
+<div class="panel">
+  <h2>Recent board pulls</h2>
+  {% if not runs %}<div class="empty">No runs yet. Scrape from the sidebar to get started.</div>{% else %}
+  <table>
+    <tr><th>Board</th><th>Started</th><th>Found</th><th>New</th><th>Result</th></tr>
+    {% for r in runs %}
+    <tr>
+      <td class="mono">{{ r.source }}</td>
+      <td class="mono">{{ r.started_at[:16].replace('T',' ') }}</td>
+      <td class="mono">{{ r.found }}</td>
+      <td class="mono">{{ r.new_jobs }}</td>
+      <td class="mono">{% if r.errors %}<span class="why">{{ r.note }}</span>{% else %}ok{% endif %}</td>
+    </tr>{% endfor %}
+  </table>{% endif %}
+</div>
+{% endblock %}

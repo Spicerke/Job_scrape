@@ -1,0 +1,17 @@
+# the database — contains your postings, settings, and resume text
+*.db
+*.db-wal
+*.db-shm
+
+# secrets
+.env
+
+# your actual resume; drop the ignore line if you want it versioned
+resume.tex
+resume.pdf
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store

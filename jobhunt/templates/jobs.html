@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_meter.html" import meter %}
+{% block title %}Jobs — jobhunt{% endblock %}
+{% block body %}
+
+<p class="eyebrow">Review</p>
+<h1>Jobs</h1>
+
+<div class="statusbar">
+  <div><span class="k">Open</span><br><b>{{ stats.open }}</b></div>
+  <div><span class="k">Eligible</span><br><b>{{ stats.eligible }}</b></div>
+  <div><span class="k">New this week</span><br><b>{{ stats.week }}</b></div>
+  <div><span class="k">Watched companies</span><br><b>{{ stats.targets }}</b></div>
+  <div style="margin-left:auto">
+    <span class="k">Resume</span><br>
+    {% if resume %}<span class="mono">{{ resume.filename }}</span>
+    {% else %}<a class="mono" href="{{ url_for('settings') }}">none — upload one</a>{% endif %}
+  </div>
+</div>
+
+<form class="filters" method="get">
+  <div class="f"><label for="q">Search</label>
+    <input type="text" id="q" name="q" value="{{ q }}" placeholder="title, company, city"></div>
+  <div class="f"><label for="show">Show</label>
+    <select id="show" name="show">
+      <option value="eligible" {{ 'selected' if show=='eligible' }}>Eligible</option>
+      <option value="target"   {{ 'selected' if show=='target' }}>Watchlist only</option>
+      <option value="filtered" {{ 'selected' if show=='filtered' }}>Filtered out</option>
+      <option value="all"      {{ 'selected' if show=='all' }}>Everything</option>
+    </select></div>
+  <div class="f" style="max-width:110px"><label for="min_score">Min score</label>
+    <input type="number" id="min_score" name="min_score" value="{{ min_score|int }}" min="0" max="100"></div>
+  <div class="f" style="max-width:110px"><label for="days">Last N days</label>
+    <input type="number" id="days" name="days" value="{{ days }}" min="1" max="365"></div>
+  <button class="btn ghost" type="submit">Apply</button>
+</form>
+
+{% if not jobs %}
+  <div class="empty">
+    <b>Nothing here yet.</b>
+    {% if stats.open == 0 %}Run a scrape from the sidebar to pull your first batch of postings.
+    {% else %}No postings match these filters. Try lowering the minimum score or widening the date range.{% endif %}
+  </div>
+{% endif %}
+
+{% for j in jobs %}
+{% set ok = j.screen_status == 'pass' %}
+<div class="job {{ 'target' if j.is_target }} {{ 'filtered' if not ok }}">
+  <div>{{ meter(j.score, ok) }}</div>
+  <div>
+    <p class="jt"><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title }}</a></p>
+    <p class="jm"><em>{{ j.company }}</em>{% if j.location %} · {{ j.location }}{% endif %}
+       {% if j.department %} · {{ j.department }}{% endif %} · {{ j.source }}</p>
+    {% if j.matched_keywords %}
+      <p class="kw">{% for k in j.matched_keywords|fromjson %}<code class="hit">{{ k }}</code>{% endfor %}</p>
+    {% endif %}
+    {% if not ok and j.screen_reason %}<span class="why">filtered — {{ j.screen_reason }}</span>{% endif %}
+  </div>
+  <div style="text-align:right">
+    {% if j.is_target %}<span class="chip tgt">watchlist</span><br>{% endif %}
+    {% if j.app_status %}<span class="chip ok">{{ j.app_status }}</span><br>{% endif %}
+    <div style="margin-top:8px" class="actions">
+      <a class="btn ghost sm" href="{{ url_for('job_detail', job_id=j.id) }}">Details</a>
+      <form method="post" action="{{ url_for('track', job_id=j.id) }}">
+        <input type="hidden" name="status" value="applied">
+        <button class="btn sm" type="submit">Applied</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

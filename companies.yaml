@@ -1,0 +1,52 @@
+# Company job boards to poll.
+#
+# `slug` is the board identifier in the company's careers URL:
+#   greenhouse       job-boards.greenhouse.io/SLUG        or boards.greenhouse.io/SLUG
+#   lever            jobs.lever.co/SLUG
+#   ashby            jobs.ashbyhq.com/SLUG
+#   smartrecruiters  jobs.smartrecruiters.com/SLUG
+#   workable         apply.workable.com/SLUG
+#
+# IMPORTANT: slugs change and companies migrate between ATS vendors. Run
+#   python -m jobhunt check-boards
+# after any edit. It reports exactly which slugs 404 so you can fix them.
+# Everything below is a starting point, not a verified list.
+#
+# target: true  ->  new postings email you immediately instead of on Friday.
+
+companies:
+  # ---- AI / ML labs -------------------------------------------------------
+  - {name: Anthropic,        ats: greenhouse, slug: anthropic,       target: true}
+  - {name: OpenAI,           ats: ashby,      slug: openai,          target: true}
+  - {name: Scale AI,         ats: ashby,      slug: scaleai,         target: false}
+  - {name: Hugging Face,     ats: lever,      slug: huggingface,     target: false}
+  - {name: Cohere,           ats: lever,      slug: cohere,          target: false}
+  - {name: Runway,           ats: lever,      slug: runwayml,        target: false}
+
+  # ---- big tech / infra ---------------------------------------------------
+  - {name: Databricks,       ats: greenhouse, slug: databricks,      target: false}
+  - {name: Stripe,           ats: greenhouse, slug: stripe,          target: true}
+  - {name: Datadog,          ats: greenhouse, slug: datadog,         target: false}
+  - {name: Cloudflare,       ats: greenhouse, slug: cloudflare,      target: false}
+  - {name: MongoDB,          ats: greenhouse, slug: mongodb,         target: false}
+  - {name: Snowflake,        ats: ashby,      slug: snowflake,       target: false}
+  - {name: Figma,            ats: greenhouse, slug: figma,           target: false}
+  - {name: Ramp,             ats: ashby,      slug: ramp,            target: false}
+  - {name: Notion,           ats: greenhouse, slug: notion,          target: false}
+  - {name: Vercel,           ats: ashby,      slug: vercel,          target: false}
+
+  # ---- NYC-heavy employers (you're at Columbia) ---------------------------
+  - {name: Two Sigma,        ats: greenhouse, slug: twosigma,        target: false}
+  - {name: Jane Street,      ats: greenhouse, slug: janestreet,      target: false}
+  - {name: Hudson River Trading, ats: greenhouse, slug: wearehrt,    target: false}
+  - {name: Bloomberg,        ats: workable,   slug: bloomberg,       target: false}
+  - {name: Peloton,          ats: greenhouse, slug: peloton,         target: false}
+  - {name: Oscar Health,     ats: greenhouse, slug: oscar,           target: false}
+  - {name: Squarespace,      ats: greenhouse, slug: squarespace,     target: false}
+
+  # ---- mobility / AV (matches your TRB + gait research) -------------------
+  - {name: Waymo,            ats: greenhouse, slug: waymo,           target: true}
+  - {name: Zoox,             ats: greenhouse, slug: zoox,            target: false}
+  - {name: Nuro,             ats: greenhouse, slug: nuro,            target: false}
+  - {name: Motional,         ats: greenhouse, slug: motional,        target: false}
+  - {name: Via,              ats: greenhouse, slug: via,             target: false}

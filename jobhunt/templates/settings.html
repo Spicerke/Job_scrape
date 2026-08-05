@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Settings — jobhunt{% endblock %}
+{% block body %}
+<p class="eyebrow">Configure</p>
+<h1>Settings</h1>
+
+<div class="panel">
+  <h2>Resume</h2>
+  <p class="hint">Used three ways: similarity scoring, the requirement-gap filter, and the
+     missing-skills list on each posting. Accepts .tex, .txt, .md, or .pdf.</p>
+  {% if resume %}
+    <p class="mono">{{ resume.filename }} — uploaded {{ resume.uploaded_at[:10] }}
+       ({{ resume.text.split()|length }} words)</p>
+  {% else %}
+    <p class="why">No resume uploaded. Resume similarity and gap screening are switched off until you add one.</p>
+  {% endif %}
+  {% if variants|length > 1 %}
+    <p class="hint" style="margin-top:10px">{{ variants|length }} variants found — every posting is
+       scored against each one and told which to send:</p>
+    <p class="kw">{% for v in variants %}<code class="hit">{{ v.name }}</code>{% endfor %}</p>
+  {% else %}
+    <p class="hint" style="margin-top:10px">Single version. To keep tailored variants in the same
+       .tex, mark each one with a <span class="mono">%%% VARIANT: Name</span> comment line —
+       anything above the first marker is shared by all of them.</p>
+  {% endif %}
+  <form method="post" action="{{ url_for('upload_resume') }}" enctype="multipart/form-data" class="actions" style="margin-top:10px">
+    <input type="file" name="resume" accept=".tex,.txt,.md,.pdf" style="max-width:320px">
+    <button class="btn sig" type="submit">Upload and re-rank</button>
+  </form>
+</div>
+
+<form method="post">
+
+<div class="panel">
+  <h2>You</h2>
+  <div class="row">
+    <div><label for="name">Name</label><input type="text" id="name" name="name" value="{{ cfg.profile.name }}"></div>
+    <div><label for="graduation">Graduation</label>
+      <input type="text" id="graduation" name="graduation" value="{{ cfg.profile.graduation }}" placeholder="2027-05"></div>
+    <div><label for="degree_level">Highest degree</label>
+      <select id="degree_level" name="degree_level">
+        {% for d in ['bachelors','masters','phd'] %}
+        <option value="{{ d }}" {{ 'selected' if cfg.profile.degree_level == d }}>{{ d }}</option>{% endfor %}
+      </select></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Roles you want</h2>
+  <div class="field">
+    <label for="role_patterns">Title patterns</label>
+    <p class="hint">One per line. A full phrase match scores highest; partial word overlap scores proportionally.</p>
+    <textarea id="role_patterns" name="role_patterns" rows="8">{{ cfg.search.role_patterns|lines }}</textarea>
+  </div>
+  <div class="row">
+    <div><label for="min_score">Digest cutoff</label>
+      <p class="hint">Below this, jobs stay out of Friday's email.</p>
+      <input type="number" id="min_score" name="min_score" value="{{ cfg.search.min_score }}" min="0" max="100"></div>
+    <div><label for="instant_min_score">Alert cutoff</label>
+      <p class="hint">Watchlist jobs below this wait for Friday.</p>
+      <input type="number" id="instant_min_score" name="instant_min_score" value="{{ cfg.search.instant_min_score }}" min="0" max="100"></div>
+    <div><label for="keyword_saturation">Keywords for a full score</label>
+      <p class="hint">How many of your skills a posting must name to max out the keyword component.</p>
+      <input type="number" id="keyword_saturation" name="keyword_saturation" value="{{ cfg.search.keyword_saturation }}" min="1" max="40"></div>
+  </div>
+  <div class="row">
+    <div><label for="w_keyword">Weight: keywords</label>
+      <input type="text" id="w_keyword" name="w_keyword" value="{{ cfg.search.weights.keyword }}"></div>
+    <div><label for="w_resume">Weight: resume</label>
+      <input type="text" id="w_resume" name="w_resume" value="{{ cfg.search.weights.resume }}"></div>
+    <div><label for="w_title">Weight: title</label>
+      <input type="text" id="w_title" name="w_title" value="{{ cfg.search.weights.title }}"></div>
+  </div>
+  <p class="hint">The three weights should add up to 1.0.</p>
+</div>
+
+<div class="panel">
+  <h2>Keywords</h2>
+  <div class="row">
+    <div>
+      <label for="skills">Your skills</label>
+      <p class="hint">One <span class="mono">term: weight</span> per line. Higher weight = you want it more.</p>
+      <textarea id="skills" name="skills" rows="14">{{ cfg.keywords.skills|weightlines }}</textarea>
+    </div>
+    <div>
+      <label for="bonus">Bonus terms</label>
+      <p class="hint">Things that make a job more interesting but aren't on your resume.</p>
+      <textarea id="bonus" name="bonus" rows="14">{{ cfg.keywords.bonus|weightlines }}</textarea>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Location</h2>
+  <div class="field">
+    <label for="locations">Acceptable locations</label>
+    <p class="hint">One per line, matched against the posting's location field only — so
+       "united states" will <b>not</b> catch "Mountain View, CA". Use cities and state codes.
+       Leave this empty to accept anywhere.</p>
+    <textarea id="locations" name="locations" rows="7">{{ cfg.screening.locations|lines }}</textarea>
+  </div>
+  <div class="check">
+    <input type="checkbox" id="allow_remote" name="allow_remote" {{ 'checked' if cfg.screening.allow_remote }}>
+    <label for="allow_remote">Always accept remote roles, wherever they're based</label>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Eligibility filters</h2>
+  <p class="hint">These remove jobs you can't apply for, separately from how well they match.</p>
+  <div class="row">
+    <div><label for="max_years_experience">Max years of experience</label>
+      <p class="hint">Drop postings asking for more. Blank to disable.</p>
+      <input type="number" id="max_years_experience" name="max_years_experience"
+             value="{{ cfg.screening.max_years_experience if cfg.screening.max_years_experience is not none }}"></div>
+    <div><label for="min_requirement_coverage">Min requirement coverage</label>
+      <p class="hint">0 to 1. Drops postings where your resume covers less than this share of the
+         technologies named under Requirements. 0 disables it.</p>
+      <input type="text" id="min_requirement_coverage" name="min_requirement_coverage"
+             value="{{ cfg.screening.min_requirement_coverage }}"></div>
+  </div>
+  <div class="check" style="margin-bottom:8px">
+    <input type="checkbox" id="enforce_degree_level" name="enforce_degree_level" {{ 'checked' if cfg.screening.enforce_degree_level }}>
+    <label for="enforce_degree_level">Drop roles that require a degree above yours</label>
+  </div>
+  <div class="check" style="margin-bottom:14px">
+    <input type="checkbox" id="enforce_graduation_year" name="enforce_graduation_year" {{ 'checked' if cfg.screening.enforce_graduation_year }}>
+    <label for="enforce_graduation_year">Drop roles aimed at a different graduating class</label>
+  </div>
+  <div class="row">
+    <div><label for="reject_title_terms">Reject if the title contains</label>
+      <textarea id="reject_title_terms" name="reject_title_terms" rows="9">{{ cfg.screening.reject_title_terms|lines }}</textarea></div>
+    <div><label for="reject_body_terms">Reject if the description contains</label>
+      <textarea id="reject_body_terms" name="reject_body_terms" rows="9">{{ cfg.screening.reject_body_terms|lines }}</textarea></div>
+    <div><label for="require_any_terms">Require at least one of</label>
+      <p class="hint">Leave empty to disable. Add "intern" to see only internships.</p>
+      <textarea id="require_any_terms" name="require_any_terms" rows="9">{{ cfg.screening.require_any_terms|lines }}</textarea></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Email me right away</h2>
+  <p class="hint">Postings from watchlist companies always alert immediately — set those on the
+     Companies page. Titles below alert immediately no matter who posted them.</p>
+  <textarea name="target_roles" rows="5">{{ cfg.targets.roles|lines }}</textarea>
+</div>
+
+<div class="panel">
+  <h2>Email delivery</h2>
+  <div class="row">
+    <div><label for="smtp_host">SMTP host</label><input type="text" id="smtp_host" name="smtp_host" value="{{ cfg.email.smtp_host }}"></div>
+    <div><label for="smtp_port">Port</label><input type="number" id="smtp_port" name="smtp_port" value="{{ cfg.email.smtp_port }}"></div>
+    <div><label for="username">SMTP username</label><input type="text" id="username" name="username" value="{{ cfg.email.username }}"></div>
+  </div>
+  <div class="row">
+    <div><label for="from_addr">From</label><input type="text" id="from_addr" name="from_addr" value="{{ cfg.email.from_addr }}"></div>
+    <div><label for="to_addr">Send to</label><input type="text" id="to_addr" name="to_addr" value="{{ cfg.email.to_addr }}"></div>
+  </div>
+  <p class="hint">The password is never stored here — it's read from the
+     <span class="mono">{{ cfg.email.password_env }}</span> environment variable.</p>
+  <div class="row">
+    <div><label for="digest_day">Digest day</label>
+      <select id="digest_day" name="digest_day">
+        {% for d in ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'] %}
+        <option value="{{ d }}" {{ 'selected' if cfg.email.digest_day == d }}>{{ d }}</option>{% endfor %}
+      </select></div>
+    <div><label for="digest_time">Digest time</label><input type="time" id="digest_time" name="digest_time" value="{{ cfg.email.digest_time }}"></div>
+    <div><label for="lookback_days">Days to include</label><input type="number" id="lookback_days" name="lookback_days" value="{{ cfg.email.lookback_days }}" min="1"></div>
+    <div><label for="max_jobs">Max jobs per email</label><input type="number" id="max_jobs" name="max_jobs" value="{{ cfg.email.max_jobs }}" min="1"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Schedule</h2>
+  <p class="hint">Applies when you run the built-in scheduler. If you use cron instead, the crontab
+     controls timing and only the digest day above matters.</p>
+  <div class="row">
+    <div><label for="scrape_times">Scrape at</label>
+      <p class="hint">One 24h time per line. Target-company alerts go out at the end of each pull.</p>
+      <textarea id="scrape_times" name="scrape_times" rows="3">{{ cfg.schedule.scrape_times|join('\n') }}</textarea></div>
+    <div class="check" style="padding-top:22px">
+      <input type="checkbox" id="schedule_enabled" name="schedule_enabled" {{ 'checked' if cfg.schedule.enabled }}>
+      <label for="schedule_enabled">Run automatically</label></div>
+  </div>
+</div>
+
+<div class="panel actions">
+  <button class="btn sig" type="submit" name="rescore" value="1">Save and re-rank everything</button>
+  <button class="btn ghost" type="submit">Save only</button>
+  <span class="hint" style="margin:0">Re-ranking applies new settings to postings already in the database.</span>
+</div>
+
+</form>
+{% endblock %}

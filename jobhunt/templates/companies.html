@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Companies — jobhunt{% endblock %}
+{% block body %}
+<p class="eyebrow">Configure</p>
+<h1>Companies</h1>
+
+<div class="panel">
+  <h2>Add a board</h2>
+  <p class="hint">The slug is the last part of the company's job board URL — for
+     <span class="mono">jobs.lever.co/figma</span> the slug is <span class="mono">figma</span>.</p>
+  <form method="post" class="row" style="align-items:end">
+    <input type="hidden" name="action" value="add">
+    <div><label for="name">Company</label><input type="text" id="name" name="name" placeholder="Figma"></div>
+    <div><label for="ats">Board type</label>
+      <select id="ats" name="ats">{% for a in adapters %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></div>
+    <div><label for="slug">Slug</label><input type="text" id="slug" name="slug" placeholder="figma"></div>
+    <div class="check" style="padding-bottom:8px">
+      <input type="checkbox" id="is_target" name="is_target">
+      <label for="is_target">Email me the moment they post</label></div>
+    <div><button class="btn sig" type="submit">Add company</button></div>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>{{ companies|length }} boards</h2>
+  <table>
+    <tr><th>Company</th><th>Board</th><th>Open</th><th>Last pull</th><th>Watchlist</th><th>Active</th><th></th></tr>
+    {% for c in companies %}
+    <tr>
+      <td><b>{{ c.name }}</b></td>
+      <td class="mono">{{ c.ats }}/{{ c.slug }}</td>
+      <td class="mono">{{ c.n_open }}</td>
+      <td class="mono">{% if c.last_status and 'error' in c.last_status %}
+            <span class="why">{{ c.last_status[:44] }}</span>
+          {% else %}{{ c.last_status or '—' }}{% endif %}</td>
+      <td>
+        <form method="post"><input type="hidden" name="action" value="target">
+          <input type="hidden" name="id" value="{{ c.id }}">
+          <input type="hidden" name="value" value="{{ 0 if c.is_target else 1 }}">
+          <button class="btn sm {{ 'sig' if c.is_target else 'ghost' }}" type="submit">
+            {{ 'watching' if c.is_target else 'off' }}</button></form>
+      </td>
+      <td>
+        <form method="post"><input type="hidden" name="action" value="active">
+          <input type="hidden" name="id" value="{{ c.id }}">
+          <input type="hidden" name="value" value="{{ 0 if c.active else 1 }}">
+          <button class="btn sm ghost" type="submit">{{ 'on' if c.active else 'paused' }}</button></form>
+      </td>
+      <td>
+        <form method="post" onsubmit="return confirm('Remove {{ c.name }}?')">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="id" value="{{ c.id }}">
+          <button class="btn sm ghost" type="submit">Remove</button></form>
+      </td>
+    </tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

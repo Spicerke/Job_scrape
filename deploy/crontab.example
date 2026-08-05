@@ -1,0 +1,17 @@
+# Cron instead of the built-in scheduler. Simplest option on a machine
+# that's already always on. `jobhunt run` = scrape + score + alerts.
+#
+#   crontab -e   and paste, adjusting paths
+#
+SHELL=/bin/bash
+BASH_ENV=/home/kai/jobhunt/.env
+
+# Twice a day, 9am and 9pm. Each run scrapes, re-scores against every resume
+# variant, and fires same-day alerts for target companies and target roles.
+0 9,21 * * *  cd /home/kai/jobhunt && /usr/bin/python3 -m jobhunt run >> ~/jobhunt.log 2>&1
+
+# The weekly digest, Friday at 5:30pm.
+30 17 * * 5   cd /home/kai/jobhunt && /usr/bin/python3 -m jobhunt digest >> ~/jobhunt.log 2>&1
+
+# the web console, started at boot and left running
+@reboot       cd /home/kai/jobhunt && /usr/bin/python3 -m jobhunt web --port 8000 >> ~/jobhunt-web.log 2>&1

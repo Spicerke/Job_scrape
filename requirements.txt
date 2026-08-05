@@ -1,0 +1,5 @@
+requests>=2.31
+PyYAML>=6.0
+Flask>=3.0
+# optional: only needed to upload a .pdf resume
+pypdf>=4.0
