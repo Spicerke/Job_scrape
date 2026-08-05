@@ -77,18 +77,93 @@ journalctl -u jobhunt -f                        # watch the first cycle
 
 Console at `http://<pi-ip>:8000` from any machine on your network.
 
-**The one real risk is SD card corruption** — cheap cards die from constant
-small writes, and SQLite in WAL mode writes often. Two mitigations, do both:
+### About the SD card
 
-1. Boot from a USB SSD instead of an SD card if you can. A $15 drive removes
-   the problem entirely.
-2. Back the database up somewhere off the Pi:
-   ```cron
-   0 3 * * *  sqlite3 ~/jobhunt/jobs.db ".backup ~/backup/jobs-$(date +\%u).db"
-   ```
-   That keeps a rotating week. Copy it to your laptop or a cloud drive
-   periodically — losing it means losing your application history, which is
-   the part you can't re-scrape.
+The common warning is "SQLite will wear out your SD card". For this workload
+that's not the real risk, and it's worth being precise about why.
+
+**Write volume is a non-issue.** Two scrape cycles a day amount to roughly
+100 MB/day, so about **35 GB/year**. Card endurance is measured in terabytes
+written, and wear levelling spreads it. You would need decades. Home Assistant
+and Pi-hole run SQLite on SD cards for years without wearing them out.
+
+**Unclean power loss is the real risk.** SD cards have no power-loss
+protection, and some report a write as durable while it's still buffered. Yank
+the plug mid-write and you can corrupt the filesystem or the card's internal
+mapping table. So:
+
+- `PRAGMA synchronous` is deliberately left at SQLite's default of FULL. Plenty
+  of projects drop it to NORMAL for speed, which risks losing recent commits on
+  power loss. Don't change it here — the speed is irrelevant at this scale.
+- Shut down with `sudo shutdown -h now` rather than pulling the cord.
+- Cut needless writes by making the systemd journal volatile — it's the other
+  thing on a Pi that writes constantly, and you don't need it on disk:
+  ```bash
+  sudo mkdir -p /etc/systemd/journald.conf.d
+  printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=32M\n' | \
+    sudo tee /etc/systemd/journald.conf.d/volatile.conf
+  sudo systemctl restart systemd-journald
+  ```
+
+**Then take backups, because that's what actually saves you.** A USB SSD is
+nice but not required; a card can still fail, and so can the Pi.
+
+```bash
+jobhunt backup                          # ~/jobhunt-backups, keeps 7
+jobhunt backup --to /mnt/usb --keep 30
+```
+
+This uses SQLite's online backup API, so it produces a consistent snapshot
+**while the daemon is running** — unlike `cp`, which can catch a half-applied
+transaction and give you a file that won't open. Run it nightly:
+
+```cron
+0 3 * * *  cd ~/jobhunt && .venv/bin/python -m jobhunt backup >> ~/jobhunt-backup.log 2>&1
+```
+
+Copy those off the Pi periodically — a backup on the card you're protecting
+against isn't a backup. Postings can be re-scraped; **your application history,
+notes, and stage timeline cannot.** That's the part worth protecting.
+
+Restoring is just moving the file back:
+
+```bash
+sudo systemctl stop jobhunt
+cp ~/jobhunt-backups/jobs-20260805-030000.db ~/jobhunt/jobs.db
+sudo systemctl start jobhunt
+```
+
+---
+
+## Reading the database from your laptop
+
+The Pi owns `jobs.db` and is the only thing that writes to it. Your laptop
+doesn't need a copy or an install — it opens `http://raspberrypi.local:8000`
+in a browser and that's the whole integration.
+
+**Don't** put the database on a network share (NFS/SMB) or a sync folder
+(Dropbox/iCloud/Syncthing) so both machines can reach it. SQLite's locking is
+unreliable over network filesystems and WAL mode explicitly does not work on
+them; sync folders give you two writers on two copies and conflicted-copy
+files. Either one loses data.
+
+To query it directly, read it over SSH:
+
+```bash
+ssh pi@raspberrypi.local 'sqlite3 ~/jobhunt/jobs.db "SELECT title, company, score FROM jobs ORDER BY score DESC LIMIT 10"'
+```
+
+or take a snapshot and pull that — safe to poke at locally, including with
+`jobhunt web --db snap.db`, as long as you don't expect writes to travel back:
+
+```bash
+ssh pi@raspberrypi.local 'cd jobhunt && .venv/bin/python -m jobhunt backup --to /tmp/snap --keep 1'
+scp pi@raspberrypi.local:/tmp/snap/jobs-*.db .
+```
+
+From outside your home, don't port-forward — use an SSH tunnel
+(`ssh -L 8000:localhost:8000 pi@raspberrypi.local`) or put Tailscale on both
+machines and reach the Pi by name with nothing exposed.
 
 ---
 

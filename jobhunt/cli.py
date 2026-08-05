@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -216,6 +217,36 @@ def cmd_apps(args, conn):
             print(f"       next: {r['next_action']}{due}")
 
 
+def cmd_backup(args, conn):
+    """Consistent copy of the database, safe to run while the daemon is live.
+
+    Uses SQLite's online backup API rather than copying the file. A plain `cp`
+    of a WAL-mode database can catch a half-applied transaction and produce a
+    snapshot that won't open — this can't.
+    """
+    dest = Path(args.to).expanduser()
+    dest.mkdir(parents=True, exist_ok=True)
+    out = dest / f"jobs-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+
+    target = sqlite3.connect(out)
+    try:
+        conn.backup(target)
+    finally:
+        target.close()
+
+    size = out.stat().st_size
+    print(f"wrote {out} ({size / 1_048_576:.1f} MB)")
+
+    # Keep the newest N and delete the rest, so an unattended cron entry can't
+    # quietly fill the card it's meant to be protecting you from.
+    snapshots = sorted(dest.glob("jobs-*.db"), key=lambda p: p.name, reverse=True)
+    for old in snapshots[args.keep:]:
+        old.unlink()
+        print(f"pruned {old.name}")
+    kept = min(len(snapshots), args.keep)
+    print(f"{kept} snapshot(s) in {dest}")
+
+
 def cmd_stats(args, conn):
     q = conn.execute
     total = q("SELECT COUNT(*) c FROM jobs").fetchone()["c"]
@@ -337,6 +368,11 @@ def main(argv=None):
 
     s = sub.add_parser("stats", help="database summary")
     s.set_defaults(fn=cmd_stats)
+
+    s = sub.add_parser("backup", help="consistent snapshot of the database")
+    s.add_argument("--to", default="~/jobhunt-backups", help="destination directory")
+    s.add_argument("--keep", type=int, default=7, help="how many snapshots to retain")
+    s.set_defaults(fn=cmd_backup)
 
     s = sub.add_parser("config", help="show/export/import settings as YAML")
     s.add_argument("action", choices=["show", "export", "import"])

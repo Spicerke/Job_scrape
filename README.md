@@ -253,6 +253,7 @@ SMTP username; it shouldn't be open to the internet.
 | `list` / `show <id>` | Terminal views, with score breakdown |
 | `track <id> <status>` | Move an application along. `--notes`, `--next`, `--by` |
 | `apps` | The application pipeline and your response rate |
+| `backup` | Consistent snapshot, safe while the daemon runs. `--to`, `--keep` |
 | `stats` | Counts and the top reasons jobs are being filtered |
 | `config show / export / import` | Move settings between YAML and the database |
 
