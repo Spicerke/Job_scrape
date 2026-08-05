@@ -176,9 +176,44 @@ def cmd_show(args, conn):
 
 
 def cmd_track(args, conn):
-    db.set_application(conn, args.job_id, args.status, args.notes)
+    db.set_application(conn, args.job_id, args.status, args.notes,
+                       args.next, args.by)
     conn.commit()
     print(f"job {args.job_id} marked '{args.status}'")
+
+
+def cmd_apps(args, conn):
+    stages = {"live": db.LIVE_STAGES, "closed": db.CLOSED_STAGES}.get(args.show)
+    rows = db.applications(conn, stages)
+    if not rows:
+        print("nothing tracked yet — `jobhunt track <id> applied`")
+        return
+
+    counts = db.application_counts(conn)
+    applied = sum(c for s, c in counts.items() if s != "interested")
+    replied = sum(counts.get(s, 0) for s in db.RESPONDED)
+    rate = f"{replied / applied * 100:.0f}%" if applied else "—"
+    print(f"applied {applied}   live {sum(counts.get(s, 0) for s in db.LIVE_STAGES)}   "
+          f"heard back {replied}   offers {counts.get('offer', 0)}   "
+          f"rejected {counts.get('rejected', 0)}   response rate {rate}")
+    print("-" * 88)
+
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        age = ""
+        if r["applied_at"]:
+            try:
+                then = datetime.fromisoformat(r["applied_at"])
+                if then.tzinfo is None:
+                    then = then.replace(tzinfo=timezone.utc)
+                age = f"{(now - then).days}d"
+            except ValueError:
+                pass
+        print(f"{r['job_id']:>5}  {db.STAGE_LABELS.get(r['status'], r['status']):<12} "
+              f"{age:>4}  {r['title'][:38]:<40} {r['company'][:18]:<20}")
+        if r["next_action"]:
+            due = f" (by {r['next_action_date']})" if r["next_action_date"] else ""
+            print(f"       next: {r['next_action']}{due}")
 
 
 def cmd_stats(args, conn):
@@ -290,9 +325,15 @@ def main(argv=None):
 
     s = sub.add_parser("track", help="record application status")
     s.add_argument("job_id", type=int)
-    s.add_argument("status", choices=["interested", "applied", "rejected", "interview", "offer", "skip"])
+    s.add_argument("status", choices=db.STAGES)
     s.add_argument("--notes")
+    s.add_argument("--next", help="next step, e.g. 'follow up with recruiter'")
+    s.add_argument("--by", help="date that next step is due (YYYY-MM-DD)")
     s.set_defaults(fn=cmd_track)
+
+    s = sub.add_parser("apps", help="the application pipeline")
+    s.add_argument("--show", choices=["live", "closed", "all"], default="live")
+    s.set_defaults(fn=cmd_apps)
 
     s = sub.add_parser("stats", help="database summary")
     s.set_defaults(fn=cmd_stats)

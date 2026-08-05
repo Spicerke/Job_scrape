@@ -52,6 +52,8 @@ apply.workable.com/SLUG         jobs.smartrecruiters.com/SLUG
 - **Jobs** — everything ranked, with the score meter, matched keywords, and the
   reason anything was filtered. Search, filter by score, flip to "Filtered out"
   to check the screener isn't eating things it shouldn't.
+- **Applications** — everything you've applied for and what happened next.
+  See below.
 - **Settings** — keywords and weights, locations, eligibility filters, roles
   that trigger instant alerts, email delivery, schedule. Save and re-rank
   applies changes to postings already in the database.
@@ -107,6 +109,40 @@ all report it.
 Screening is deliberately *not* per-variant: "can I apply at all" reads the
 whole document, so a requirement covered by any one variant counts as covered.
 
+## Tracking what you applied for
+
+Hit **Applied** on any posting and it moves into the Applications dashboard.
+From there each one walks a pipeline:
+
+```
+interested → applied → heard back → interview → offer
+                                              ↘ rejected / withdrawn
+```
+
+The dashboard shows a funnel across the top — applied, still live, heard back,
+offers, rejected, and your **response rate** — then the applications themselves,
+colour-coded by stage down the left edge. Each row edits in place: change the
+stage, set a next step with a due date, add notes.
+
+**Needs a nudge** is the part that earns its keep. It surfaces anything with a
+follow-up date that's passed, or sitting at "applied" for 14+ days with no
+reply — the applications that quietly go stale otherwise.
+
+Every stage change is written to a history table, so each application has a
+dated timeline of what happened and when, and the response rate is computed
+from real transitions rather than a number you maintain by hand. The posting's
+best-matching resume variant is shown alongside, so you can see which one you
+sent six weeks later.
+
+From the terminal:
+
+```bash
+jobhunt apps                          # the live pipeline + funnel
+jobhunt apps --show closed
+jobhunt track 218 applied --notes "referred by Dana"
+jobhunt track 218 interview --next "send thank-you note" --by 2026-08-06
+```
+
 ## How a job gets scored, and how it gets rejected
 
 **Score (0–100)** is a weighted blend, all three weights editable:
@@ -148,24 +184,32 @@ you'll see it there rather than wondering what you missed.
 
 ## Running it automatically
 
-**Cron** — right answer on a machine that's already always on:
-
-```cron
-0 9,21 * * *  cd ~/jobhunt && python3 -m jobhunt run     # 9am + 9pm: scrape, score, alert
-30 17 * * 5   cd ~/jobhunt && python3 -m jobhunt digest  # Friday 5:30pm
-```
-
-See `deploy/crontab.example`. Both times are local to the machine — check `TZ`
-if you're running this in a container.
-
-**Built-in scheduler** — for containers, where there's no cron:
+**Use the built-in scheduler, not cron** — unless the host has real 24/7
+uptime:
 
 ```bash
 python -m jobhunt daemon --with-web
 ```
 
-One process, scheduler plus web UI. Last-run dates are stored in the database,
-so a restart never sends a duplicate digest or skips a day.
+One process, scheduler plus web UI. It records which slots have run today in
+the database and checks every 5 minutes, so a machine that was asleep at 9am
+**catches up when it wakes** instead of silently losing the run. A restart
+never double-sends. Cron has no such recovery — a missed 9am is gone.
+
+`deploy/crontab.example` is there if you're on a server that genuinely never
+goes down:
+
+```cron
+0 9,21 * * *  cd ~/jobhunt && python3 -m jobhunt run     # 9am + 9pm
+30 17 * * 5   cd ~/jobhunt && python3 -m jobhunt digest  # Friday 5:30pm
+```
+
+Both are local to the machine — set the timezone, or check `TZ` in a container.
+
+**Where to run it: see [`deploy/HOSTING.md`](deploy/HOSTING.md).** Short answer
+for a personal job search — a Raspberry Pi under your desk, ~$9/year in
+electricity, systemd unit in `deploy/jobhunt.service`. A $3.50–5/month VPS if
+you'd rather not own the hardware.
 
 **Docker:**
 
@@ -207,7 +251,8 @@ SMTP username; it shouldn't be open to the internet.
 | `score` | Re-rank against current settings |
 | `digest` / `alerts` | Send email. `--dry-run` writes an HTML preview |
 | `list` / `show <id>` | Terminal views, with score breakdown |
-| `track <id> <status>` | Record applied / interview / offer / rejected |
+| `track <id> <status>` | Move an application along. `--notes`, `--next`, `--by` |
+| `apps` | The application pipeline and your response rate |
 | `stats` | Counts and the top reasons jobs are being filtered |
 | `config show / export / import` | Move settings between YAML and the database |
 

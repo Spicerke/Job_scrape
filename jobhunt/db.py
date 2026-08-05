@@ -54,11 +54,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     UNIQUE(source, source_job_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen);
-CREATE INDEX IF NOT EXISTS idx_jobs_score      ON jobs(score DESC);
-CREATE INDEX IF NOT EXISTS idx_jobs_open       ON jobs(is_open, screen_status);
-CREATE INDEX IF NOT EXISTS idx_jobs_company    ON jobs(company);
-
 CREATE TABLE IF NOT EXISTS notifications (
     id      INTEGER PRIMARY KEY,
     job_id  INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -68,12 +63,24 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE TABLE IF NOT EXISTS applications (
+    id               INTEGER PRIMARY KEY,
+    job_id           INTEGER NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL DEFAULT 'interested',
+    applied_at       TEXT,
+    notes            TEXT,
+    next_action      TEXT,
+    next_action_date TEXT,
+    updated_at       TEXT NOT NULL
+);
+
+-- One row per stage change, so the dashboard can show a timeline and work out
+-- how long something has been sitting without a reply.
+CREATE TABLE IF NOT EXISTS application_events (
     id         INTEGER PRIMARY KEY,
-    job_id     INTEGER NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
-    status     TEXT NOT NULL DEFAULT 'interested',
-    applied_at TEXT,
-    notes      TEXT,
-    updated_at TEXT NOT NULL
+    job_id     INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    status     TEXT NOT NULL,
+    note       TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -112,6 +119,16 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 """
 
+# Applied after _migrate(), so an index may safely reference a column that an
+# older database is only acquiring in this same connect() call.
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen);
+CREATE INDEX IF NOT EXISTS idx_jobs_score      ON jobs(score DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_open       ON jobs(is_open, screen_status);
+CREATE INDEX IF NOT EXISTS idx_jobs_company    ON jobs(company);
+CREATE INDEX IF NOT EXISTS idx_events_job      ON application_events(job_id, id);
+"""
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -124,6 +141,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     _migrate(conn)
+    conn.executescript(INDEXES)
     return conn
 
 
@@ -137,6 +155,11 @@ def _migrate(conn) -> None:
     for column, decl in (("best_variant", "TEXT"), ("variant_scores", "TEXT")):
         if column not in have:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {decl}")
+
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(applications)")}
+    for column, decl in (("next_action", "TEXT"), ("next_action_date", "TEXT")):
+        if column not in have:
+            conn.execute(f"ALTER TABLE applications ADD COLUMN {column} {decl}")
     conn.commit()
 
 
@@ -291,18 +314,84 @@ def finish_run(conn, run_id: int, found: int, new: int, errors: int, note: str =
     )
 
 
-def set_application(conn, job_id: int, status: str, notes: str | None = None) -> None:
+# The pipeline, in order. `interested` is a bookmark; everything from `applied`
+# onward is a real application. Splitting live from finished lets the dashboard
+# answer "what still needs me" without hardcoding the list in three places.
+STAGES = ["interested", "applied", "heard_back", "interview",
+          "offer", "rejected", "withdrawn"]
+LIVE_STAGES = ["applied", "heard_back", "interview"]
+CLOSED_STAGES = ["offer", "rejected", "withdrawn"]
+STAGE_LABELS = {
+    "interested": "Interested", "applied": "Applied",
+    "heard_back": "Heard back", "interview": "Interviewing",
+    "offer": "Offer", "rejected": "Rejected", "withdrawn": "Withdrawn",
+}
+# Anything that means a human replied — the numerator of the response rate.
+RESPONDED = ("heard_back", "interview", "offer")
+
+
+def set_application(conn, job_id: int, status: str, notes: str | None = None,
+                    next_action: str | None = None,
+                    next_action_date: str | None = None) -> None:
     now = utcnow()
-    applied = now if status == "applied" else None
+    # Stamp the application date the first time it reaches a real stage, so
+    # "applied 12 days ago" survives a later move to interview.
+    applied = now if status != "interested" else None
+    prev = conn.execute(
+        "SELECT status FROM applications WHERE job_id=?", (job_id,)).fetchone()
     conn.execute(
-        """INSERT INTO applications (job_id, status, applied_at, notes, updated_at)
-           VALUES (?,?,?,?,?)
+        """INSERT INTO applications (job_id, status, applied_at, notes,
+                                     next_action, next_action_date, updated_at)
+           VALUES (?,?,?,?,?,?,?)
            ON CONFLICT(job_id) DO UPDATE SET status=excluded.status,
                applied_at=COALESCE(applications.applied_at, excluded.applied_at),
                notes=COALESCE(excluded.notes, applications.notes),
+               next_action=excluded.next_action,
+               next_action_date=excluded.next_action_date,
                updated_at=excluded.updated_at""",
-        (job_id, status, applied, notes, now),
+        (job_id, status, applied, notes, next_action, next_action_date, now),
     )
+    if prev is None or prev["status"] != status:
+        conn.execute(
+            """INSERT INTO application_events (job_id, status, note, created_at)
+               VALUES (?,?,?,?)""",
+            (job_id, status, notes, now),
+        )
+
+
+def applications(conn, stages: list[str] | None = None) -> list[sqlite3.Row]:
+    """Tracked jobs joined to their posting, newest activity first."""
+    where, args = "", []
+    if stages:
+        where = f"WHERE a.status IN ({','.join('?' * len(stages))})"
+        args = list(stages)
+    return conn.execute(
+        f"""SELECT a.*, j.title, j.company, j.location, j.url, j.score,
+                   j.best_variant, j.is_target, j.source,
+                   (SELECT COUNT(*) FROM application_events e
+                     WHERE e.job_id = a.job_id) AS event_count
+            FROM applications a JOIN jobs j ON j.id = a.job_id
+            {where}
+            ORDER BY a.updated_at DESC""",
+        args,
+    ).fetchall()
+
+
+def application_events(conn, job_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM application_events WHERE job_id=? ORDER BY id", (job_id,)
+    ).fetchall()
+
+
+def application_counts(conn) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT status, COUNT(*) c FROM applications GROUP BY status").fetchall()
+    return {r["status"]: r["c"] for r in rows}
+
+
+def delete_application(conn, job_id: int) -> None:
+    conn.execute("DELETE FROM application_events WHERE job_id=?", (job_id,))
+    conn.execute("DELETE FROM applications WHERE job_id=?", (job_id,))
 
 
 # --------------------------------------------------------------------------

@@ -43,10 +43,12 @@ def parse_time(value, default: tuple[int, int]) -> tuple[int, int]:
 
 
 def scrape_slots(sched: dict) -> list[tuple[int, int]]:
-    """Configured scrape times, oldest first.
+    """Configured scrape times, earliest first.
 
-    Accepts the current `scrape_times: ["09:00", "21:00"]` and still honours a
-    legacy single `scrape_hour` so an existing database keeps its schedule.
+    `scrape_times` wins. The single `scrape_hour` key it replaced is only read
+    if `scrape_times` is missing entirely — which, since the defaults always
+    supply it, means an upgraded database moves to 09:00/21:00 rather than
+    keeping its old single hour. Same for `digest_hour` -> `digest_time`.
     """
     raw = sched.get("scrape_times")
     if not raw:

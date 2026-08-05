@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Applications — jobhunt{% endblock %}
+
+{% macro row(a) %}
+{% set age = a.applied_at|days_since %}
+<div class="app stage-{{ a.status }}">
+  <div class="app-main">
+    <p class="jt"><a href="{{ a.url }}" target="_blank" rel="noopener">{{ a.title }}</a></p>
+    <p class="jm"><em>{{ a.company }}</em>{% if a.location %} · {{ a.location }}{% endif %}
+      {% if a.score is not none %} · <span class="mono">{{ '%.0f' % a.score }} match</span>{% endif %}
+      {% if a.best_variant %} · sent <span class="mono">{{ a.best_variant }}</span>{% endif %}</p>
+    <p class="jm">
+      <span class="chip {{ 'ok' if a.status in ('offer','heard_back','interview') }}">{{ a.status|stagelabel }}</span>
+      {% if a.is_target %}<span class="chip tgt">watchlist</span>{% endif %}
+      {% if age is not none %}<span class="hint">· {{ age }}d since applied</span>{% endif %}
+      {% if a.event_count > 1 %}
+        <a class="hint" href="{{ url_for('application_detail', job_id=a.job_id) }}">· {{ a.event_count }} updates</a>
+      {% endif %}
+    </p>
+    {% if a.next_action %}
+      <p class="jm">Next: <b>{{ a.next_action }}</b>
+        {% if a.next_action_date %}<span class="mono">{{ a.next_action_date }}</span>{% endif %}</p>
+    {% endif %}
+    {% if a.notes %}<p class="hint">{{ a.notes }}</p>{% endif %}
+  </div>
+
+  <form class="app-edit" method="post" action="{{ url_for('track', job_id=a.job_id) }}">
+    <select name="status">
+      {% for s in stages %}<option value="{{ s }}" {{ 'selected' if a.status == s }}>{{ labels[s] }}</option>{% endfor %}
+      <option value="__delete__">— remove —</option>
+    </select>
+    <input type="text" name="next_action" value="{{ a.next_action or '' }}" placeholder="next step">
+    <input type="date" name="next_action_date" value="{{ a.next_action_date or '' }}">
+    <input type="text" name="notes" value="{{ a.notes or '' }}" placeholder="notes">
+    <button class="btn sm" type="submit">Save</button>
+  </form>
+</div>
+{% endmacro %}
+
+{% block body %}
+<p class="eyebrow">Review</p>
+<h1>Applications</h1>
+
+<div class="statusbar">
+  <div><span class="k">Applied</span><br><b>{{ stats.applied }}</b></div>
+  <div><span class="k">Still live</span><br><b>{{ stats.live }}</b></div>
+  <div><span class="k">Heard back</span><br><b>{{ stats.responded }}</b></div>
+  <div><span class="k">Offers</span><br><b>{{ stats.offers }}</b></div>
+  <div><span class="k">Rejected</span><br><b>{{ stats.rejected }}</b></div>
+  <div style="margin-left:auto"><span class="k">Response rate</span><br>
+    <b>{{ '%.0f%%' % stats.rate }}</b></div>
+</div>
+
+{% if nudges %}
+<div class="panel">
+  <h2>Needs a nudge</h2>
+  <p class="hint">A follow-up date that's passed, or sitting at "applied" for
+     {{ stale_days }}+ days with no reply.</p>
+  {% for a in nudges %}
+    {% set age = a.applied_at|days_since %}
+    <p class="jm" style="margin:6px 0">
+      <a href="{{ a.url }}" target="_blank" rel="noopener">{{ a.title }}</a>
+      — <em>{{ a.company }}</em>
+      {% if a.next_action_date %}<span class="why">{{ a.next_action }} due {{ a.next_action_date }}</span>
+      {% else %}<span class="why">no reply in {{ age }} days</span>{% endif %}
+    </p>
+  {% endfor %}
+</div>
+{% endif %}
+
+<form class="filters" method="get">
+  <div class="f"><label for="show">Show</label>
+    <select id="show" name="show" onchange="this.form.submit()">
+      <option value="live"       {{ 'selected' if show=='live' }}>Live ({{ stats.live }})</option>
+      <option value="interested" {{ 'selected' if show=='interested' }}>Interested ({{ counts.get('interested', 0) }})</option>
+      <option value="closed"     {{ 'selected' if show=='closed' }}>Closed</option>
+      <option value="all"        {{ 'selected' if show=='all' }}>Everything</option>
+    </select></div>
+  <button class="btn ghost" type="submit">Apply</button>
+</form>
+
+{% if not rows %}
+  <div class="empty">
+    <b>Nothing here yet.</b>
+    Mark a posting <span class="mono">Applied</span> from the Jobs page and it shows up here.
+  </div>
+{% endif %}
+
+{% for a in rows %}{{ row(a) }}{% endfor %}
+{% endblock %}

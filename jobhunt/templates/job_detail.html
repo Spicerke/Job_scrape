@@ -52,11 +52,14 @@
   <h2>Track</h2>
   <form method="post" action="{{ url_for('track', job_id=j.id) }}" class="actions">
     <select name="status" style="max-width:180px">
-      {% for s in ['interested','applied','interview','offer','rejected','skip'] %}
-      <option value="{{ s }}" {{ 'selected' if j.app_status == s }}>{{ s }}</option>{% endfor %}
+      {% for s in stages %}
+      <option value="{{ s }}" {{ 'selected' if j.app_status == s }}>{{ labels[s] }}</option>{% endfor %}
     </select>
     <input type="text" name="notes" placeholder="notes" value="{{ j.notes or '' }}" style="max-width:320px">
     <button class="btn" type="submit">Save</button>
+    {% if j.app_status %}
+      <a class="btn ghost sm" href="{{ url_for('application_detail', job_id=j.id) }}">Full history →</a>
+    {% endif %}
   </form>
 </div>
 

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ a.title }} — applications{% endblock %}
+{% block body %}
+<p class="eyebrow"><a href="{{ url_for('applications') }}">← Applications</a></p>
+<h1>{{ a.title }}</h1>
+<p class="jm" style="margin-bottom:16px"><em>{{ a.company }}</em>
+  {% if a.location %} · {{ a.location }}{% endif %} ·
+  <a href="{{ a.url }}" target="_blank" rel="noopener">Open the posting ↗</a></p>
+
+<div class="panel">
+  <h2>Current stage</h2>
+  <p><span class="chip {{ 'ok' if a.status in ('offer','heard_back','interview') }}">{{ a.status|stagelabel }}</span>
+     {% if a.applied_at %}<span class="hint">applied {{ a.applied_at|date }}
+       — {{ a.applied_at|days_since }} days ago</span>{% endif %}</p>
+  {% if a.best_variant %}
+    <p class="hint">Best-matching resume for this posting: <span class="mono">{{ a.best_variant }}</span></p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('track', job_id=a.job_id) }}" style="margin-top:12px">
+    <div class="row">
+      <div><label for="status">Move to</label>
+        <select id="status" name="status">
+          {% for s in stages %}<option value="{{ s }}" {{ 'selected' if a.status == s }}>{{ labels[s] }}</option>{% endfor %}
+        </select></div>
+      <div><label for="next_action">Next step</label>
+        <input type="text" id="next_action" name="next_action" value="{{ a.next_action or '' }}"
+               placeholder="follow up with recruiter"></div>
+      <div><label for="next_action_date">By</label>
+        <input type="date" id="next_action_date" name="next_action_date" value="{{ a.next_action_date or '' }}"></div>
+    </div>
+    <div class="field">
+      <label for="notes">Notes</label>
+      <input type="text" id="notes" name="notes" value="{{ a.notes or '' }}">
+    </div>
+    <div class="actions"><button class="btn sig" type="submit">Save</button></div>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>History</h2>
+  {% if not events %}<p class="hint">No stage changes recorded yet.</p>{% endif %}
+  <table>
+    {% for e in events %}
+    <tr>
+      <td class="mono">{{ e.created_at|date }}</td>
+      <td><span class="chip">{{ e.status|stagelabel }}</span></td>
+      <td class="hint">{{ e.note or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

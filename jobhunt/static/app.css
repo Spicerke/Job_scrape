@@ -240,6 +240,35 @@ tr:hover td { background: #fafbfc; }
   .job { grid-template-columns: 1fr; }
 }
 
+/* --------------------------------------------------- application pipeline */
+.app {
+  display: grid; grid-template-columns: 1fr minmax(280px, 380px); gap: 16px;
+  align-items: start; background: var(--panel); border: 1px solid var(--rule);
+  border-left: 3px solid var(--off); border-radius: 6px;
+  padding: 13px 16px; margin-bottom: 7px;
+}
+.app:hover { border-color: var(--faint); }
+.app-main .jm { margin-top: 4px; }
+.app-main .chip { margin-right: 4px; }
+
+/* Stage reads off the left edge, so the pipeline is scannable at a glance. */
+.app.stage-interested { border-left-color: var(--off); }
+.app.stage-applied    { border-left-color: var(--signal); }
+.app.stage-heard_back { border-left-color: var(--warn); }
+.app.stage-interview  { border-left-color: var(--warn); }
+.app.stage-offer      { border-left-color: var(--pass); }
+.app.stage-rejected   { border-left-color: var(--rule); background: #f4f6f8; }
+.app.stage-withdrawn  { border-left-color: var(--rule); background: #f4f6f8; }
+.app.stage-rejected .jt a, .app.stage-withdrawn .jt a { color: var(--muted); }
+
+.app-edit { display: grid; gap: 6px; }
+.app-edit select, .app-edit input { margin: 0; }
+.app-edit button { justify-self: end; }
+
+@media (max-width: 860px) {
+  .app { grid-template-columns: 1fr; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }

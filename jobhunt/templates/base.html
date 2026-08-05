@@ -24,6 +24,7 @@
 
     <div class="grp">Review</div>
     <a href="{{ url_for('jobs') }}" class="{{ 'on' if request.endpoint in ('jobs','job_detail') }}">Jobs</a>
+    <a href="{{ url_for('applications') }}" class="{{ 'on' if request.endpoint in ('applications','application_detail') }}">Applications</a>
     <a href="{{ url_for('activity') }}" class="{{ 'on' if request.endpoint == 'activity' }}">Activity</a>
 
     <div class="grp">Configure</div>

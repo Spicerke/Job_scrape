@@ -1,15 +1,24 @@
-# Linux without Docker. Install to /etc/systemd/system/jobhunt.service
+# Raspberry Pi or any Linux box, without Docker.
+#   sudo cp deploy/jobhunt.service /etc/systemd/system/
 #   sudo systemctl enable --now jobhunt
+#   journalctl -u jobhunt -f
+#
+# On Raspberry Pi OS the default user is `pi`, not `kai` — check User=, the
+# paths, and whether you're using a venv before enabling this.
 [Unit]
 Description=jobhunt scheduler and web console
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=kai
 WorkingDirectory=/home/kai/jobhunt
 EnvironmentFile=/home/kai/jobhunt/.env
-ExecStart=/usr/bin/python3 -m jobhunt daemon --with-web --host 127.0.0.1 --port 8000
+# 0.0.0.0 makes the console reachable from your laptop on the same network.
+# That REQUIRES JOBHUNT_WEB_PASSWORD in the .env — the app refuses to bind to
+# a non-localhost interface without it. Use 127.0.0.1 for SSH-tunnel-only.
+ExecStart=/home/kai/jobhunt/.venv/bin/python -m jobhunt daemon --with-web --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=30
 

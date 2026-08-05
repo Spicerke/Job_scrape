@@ -22,6 +22,8 @@ from .sources.ats import ADAPTERS
 
 DB_PATH = os.environ.get("JOBHUNT_DB", str(Path(__file__).resolve().parent.parent / "jobs.db"))
 PASSWORD = os.environ.get("JOBHUNT_WEB_PASSWORD", "")
+# An application sitting at "applied" this long with no reply gets nudged.
+STALE_DAYS = 14
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("JOBHUNT_SECRET_KEY") or secrets.token_hex(32)
@@ -75,9 +77,25 @@ def weights_to_lines(d: dict) -> str:
     return "\n".join(f"{k}: {v:g}" for k, v in (d or {}).items())
 
 
+def days_since(iso: str | None) -> int | None:
+    """Whole days between an ISO timestamp and now. None if unparseable."""
+    if not iso:
+        return None
+    try:
+        then = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - then).days
+
+
 app.jinja_env.filters["fromjson"] = lambda v: json.loads(v or "[]")
 app.jinja_env.filters["lines"] = lambda v: "\n".join(v or [])
 app.jinja_env.filters["weightlines"] = weights_to_lines
+app.jinja_env.filters["days_since"] = days_since
+app.jinja_env.filters["stagelabel"] = lambda s: db.STAGE_LABELS.get(s, s or "—")
+app.jinja_env.filters["date"] = lambda v: (v or "")[:10]
 
 
 # ------------------------------------------------------------------- routes
@@ -162,7 +180,8 @@ def job_detail(job_id: int):
                                have=have, missing=missing,
                                matched=json.loads(j["matched_keywords"] or "[]"),
                                gaps=json.loads(j["missing_keywords"] or "[]"),
-                               variant_scores=json.loads(j["variant_scores"] or "{}"))
+                               variant_scores=json.loads(j["variant_scores"] or "{}"),
+                               stages=db.STAGES, labels=db.STAGE_LABELS)
     finally:
         c.close()
 
@@ -170,14 +189,74 @@ def job_detail(job_id: int):
 @app.route("/job/<int:job_id>/track", methods=["POST"])
 @protected
 def track(job_id: int):
+    f = request.form
+    status = f.get("status", "interested")
     c = conn()
     try:
-        db.set_application(c, job_id, request.form["status"], request.form.get("notes"))
+        if status == "__delete__":
+            db.delete_application(c, job_id)
+            flash("Removed from the pipeline.", "ok")
+        else:
+            db.set_application(c, job_id, status, f.get("notes"),
+                               f.get("next_action"), f.get("next_action_date"))
+            flash(f"Marked {db.STAGE_LABELS.get(status, status)}.", "ok")
         c.commit()
-        flash(f"Marked {request.form['status']}.", "ok")
     finally:
         c.close()
-    return redirect(request.referrer or url_for("jobs"))
+    return redirect(request.referrer or url_for("applications"))
+
+
+# -------------------------------------------------------------- applications
+
+@app.route("/applications")
+@protected
+def applications():
+    show = request.args.get("show", "live")
+    stages = {"live": db.LIVE_STAGES, "closed": db.CLOSED_STAGES,
+              "interested": ["interested"]}.get(show)
+    c = conn()
+    try:
+        rows = db.applications(c, stages)
+        counts = db.application_counts(c)
+        applied_total = sum(counts.get(s, 0) for s in db.STAGES if s != "interested")
+        responded = sum(counts.get(s, 0) for s in db.RESPONDED)
+        stats = {
+            "applied": applied_total,
+            "live": sum(counts.get(s, 0) for s in db.LIVE_STAGES),
+            "responded": responded,
+            "offers": counts.get("offer", 0),
+            "rejected": counts.get("rejected", 0),
+            "rate": (responded / applied_total * 100) if applied_total else 0.0,
+        }
+        # Things that have gone quiet or have a follow-up date that's passed.
+        today = datetime.now(timezone.utc).date().isoformat()
+        nudges = [r for r in db.applications(c, db.LIVE_STAGES)
+                  if (r["next_action_date"] and r["next_action_date"] <= today)
+                  or (r["status"] == "applied"
+                      and (days_since(r["applied_at"]) or 0) >= STALE_DAYS)]
+        return render_template("applications.html", rows=rows, stats=stats,
+                               counts=counts, nudges=nudges, show=show,
+                               stages=db.STAGES, labels=db.STAGE_LABELS,
+                               stale_days=STALE_DAYS, status=tasks.STATUS,
+                               cfg=config_store.load(c))
+    finally:
+        c.close()
+
+
+@app.route("/application/<int:job_id>")
+@protected
+def application_detail(job_id: int):
+    c = conn()
+    try:
+        rows = [r for r in db.applications(c) if r["job_id"] == job_id]
+        if not rows:
+            return "Not tracked.", 404
+        return render_template("application_detail.html", a=rows[0],
+                               events=db.application_events(c, job_id),
+                               stages=db.STAGES, labels=db.STAGE_LABELS,
+                               status=tasks.STATUS, cfg=config_store.load(c))
+    finally:
+        c.close()
 
 
 # ------------------------------------------------------------------ settings
@@ -234,7 +313,8 @@ def settings():
                 "lookback_days": int(f.get("lookback_days") or 7),
                 "max_jobs": int(f.get("max_jobs") or 40),
             })
-            # Drop the legacy single-hour keys so they can't shadow the new ones.
+            # Drop the superseded single-hour keys rather than leaving dead
+            # values in the stored config for someone to misread later.
             cfg["email"].pop("digest_hour", None)
             times = [_fmt_time(t, None) for t in lines_to_list(f.get("scrape_times"))]
             cfg["schedule"].update({
