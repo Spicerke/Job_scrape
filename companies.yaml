@@ -18,10 +18,10 @@ companies:
   # ---- AI / ML labs -------------------------------------------------------
   - {name: Anthropic,        ats: greenhouse, slug: anthropic,       target: true}
   - {name: OpenAI,           ats: ashby,      slug: openai,          target: true}
-  - {name: Scale AI,         ats: ashby,      slug: scaleai,         target: false}
-  - {name: Hugging Face,     ats: lever,      slug: huggingface,     target: false}
-  - {name: Cohere,           ats: lever,      slug: cohere,          target: false}
-  - {name: Runway,           ats: lever,      slug: runwayml,        target: false}
+  - {name: Scale AI,         ats: greenhouse, slug: scaleai,         target: false}
+  - {name: Hugging Face,     ats: workable,   slug: huggingface,     target: false}
+  - {name: Cohere,           ats: ashby,      slug: cohere,          target: false}
+  - {name: Runway,           ats: ashby,      slug: runway,          target: false}
 
   # ---- big tech / infra ---------------------------------------------------
   - {name: Databricks,       ats: greenhouse, slug: databricks,      target: false}
@@ -32,13 +32,16 @@ companies:
   - {name: Snowflake,        ats: ashby,      slug: snowflake,       target: false}
   - {name: Figma,            ats: greenhouse, slug: figma,           target: false}
   - {name: Ramp,             ats: ashby,      slug: ramp,            target: false}
-  - {name: Notion,           ats: greenhouse, slug: notion,          target: false}
+  - {name: Notion,           ats: ashby,      slug: notion,          target: false}
   - {name: Vercel,           ats: ashby,      slug: vercel,          target: false}
 
   # ---- NYC-heavy employers (you're at Columbia) ---------------------------
-  - {name: Two Sigma,        ats: greenhouse, slug: twosigma,        target: false}
+  # Two Sigma and Hudson River Trading run their own career portals, not one
+  # of the five ATS vendors below, so there is no JSON board to poll. Left
+  # commented rather than deleted so they don't get re-added and re-broken.
+  # - {name: Two Sigma,      ats: ?,          slug: ?,               target: false}
   - {name: Jane Street,      ats: greenhouse, slug: janestreet,      target: false}
-  - {name: Hudson River Trading, ats: greenhouse, slug: wearehrt,    target: false}
+  # - {name: Hudson River Trading, ats: ?,    slug: ?,               target: false}
   - {name: Bloomberg,        ats: workable,   slug: bloomberg,       target: false}
   - {name: Peloton,          ats: greenhouse, slug: peloton,         target: false}
   - {name: Oscar Health,     ats: greenhouse, slug: oscar,           target: false}
@@ -46,7 +49,7 @@ companies:
 
   # ---- mobility / AV (matches your TRB + gait research) -------------------
   - {name: Waymo,            ats: greenhouse, slug: waymo,           target: true}
-  - {name: Zoox,             ats: greenhouse, slug: zoox,            target: false}
+  - {name: Zoox,             ats: lever,      slug: zoox,            target: false}
   - {name: Nuro,             ats: greenhouse, slug: nuro,            target: false}
   - {name: Motional,         ats: greenhouse, slug: motional,        target: false}
   - {name: Via,              ats: greenhouse, slug: via,             target: false}

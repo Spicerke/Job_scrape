@@ -1,10 +1,24 @@
 # Raspberry Pi or any Linux box, without Docker.
+#
+# The paths below say USER on purpose. Don't copy this file as-is — substitute
+# your own account in the same step, or systemd fails with status=203/EXEC
+# ("Unable to locate executable"), which is what a wrong path looks like:
+#
 #   sudo cp deploy/jobhunt.service /etc/systemd/system/
-#   sudo systemctl enable --now jobhunt
+#   sudo sed -i "s|/home/USER/jobhunt|$HOME/jobhunt|g; s|^User=USER$|User=$USER|" \
+#     /etc/systemd/system/jobhunt.service
+#
+#   # confirm before starting — all four should name your account and exist
+#   grep -E "^User=|^WorkingDirectory=|^EnvironmentFile=|^ExecStart=" \
+#     /etc/systemd/system/jobhunt.service
+#   ls -l $HOME/jobhunt/.venv/bin/python
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now jobhunt     # enable = survives reboot
 #   journalctl -u jobhunt -f
 #
-# On Raspberry Pi OS the default user is `pi`, not `kai` — check User=, the
-# paths, and whether you're using a venv before enabling this.
+# If your virtualenv is `venv` rather than `.venv`, fix ExecStart too:
+#   sudo sed -i "s|/.venv/bin/python|/venv/bin/python|" /etc/systemd/system/jobhunt.service
 [Unit]
 Description=jobhunt scheduler and web console
 After=network-online.target
@@ -12,13 +26,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=kai
-WorkingDirectory=/home/kai/jobhunt
-EnvironmentFile=/home/kai/jobhunt/.env
+User=USER
+WorkingDirectory=/home/USER/jobhunt
+# Holds JOBHUNT_WEB_PASSWORD, JOBHUNT_SECRET_KEY, and JOBHUNT_SMTP_PASSWORD.
+# systemd reads this once at start, so `systemctl restart jobhunt` is required
+# after editing .env — the running service will not pick up changes on its own.
+EnvironmentFile=/home/USER/jobhunt/.env
 # 0.0.0.0 makes the console reachable from your laptop on the same network.
 # That REQUIRES JOBHUNT_WEB_PASSWORD in the .env — the app refuses to bind to
 # a non-localhost interface without it. Use 127.0.0.1 for SSH-tunnel-only.
-ExecStart=/home/kai/jobhunt/.venv/bin/python -m jobhunt daemon --with-web --host 0.0.0.0 --port 8000
+ExecStart=/home/USER/jobhunt/.venv/bin/python -m jobhunt daemon --with-web --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=30
 
