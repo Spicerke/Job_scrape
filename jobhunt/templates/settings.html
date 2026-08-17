@@ -7,29 +7,55 @@
 <div class="panel">
   <h2>Resume</h2>
   <p class="hint">Used three ways: similarity scoring, the requirement-gap filter, and the
-     missing-skills list on each posting. Accepts .tex, .txt, .md, or .pdf.</p>
-  {% if resume %}
-    <p class="mono">{{ resume.filename }} — uploaded {{ resume.uploaded_at[:10] }}
-       ({{ resume.text.split()|length }} words)</p>
+     missing-skills list on each posting. Accepts .tex, .txt, .md, and .pdf.</p>
+  {% if variants %}
+    <table style="margin-top:12px">
+      <thead><tr><th>Variant</th><th>Match text</th><th>Sends</th><th></th></tr></thead>
+      <tbody>
+      {% for v in variants %}
+        <tr>
+          <td><strong>{{ v.name }}</strong>
+            {% if v.note %}<br><span class="hint">{{ v.note }}</span>{% endif %}</td>
+          <td class="mono">{{ v.text.split()|length }} words<br>
+            <span class="hint">{{ v.source or 'uploaded' }}</span></td>
+          <td>
+            {% if v.file_name %}
+              <a href="{{ url_for('resume_file', vid=v.id) }}" class="mono">{{ v.file_name }}</a>
+            {% else %}
+              <span class="hint">nothing attached — upload the PDF to send</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right">
+            <form method="post" action="{{ url_for('delete_variant', vid=v.id) }}"
+                  onsubmit="return confirm('Remove the {{ v.name }} variant?')">
+              <button class="btn sm" type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if variants|length > 1 %}
+      <p class="hint" style="margin-top:10px">Every posting is scored against all
+         {{ variants|length }} and tagged with the one to send.</p>
+    {% endif %}
   {% else %}
     <p class="why">No resume uploaded. Resume similarity and gap screening are switched off until you add one.</p>
   {% endif %}
-  {% if variants|length > 1 %}
-    <p class="hint" style="margin-top:10px">{{ variants|length }} variants found — every posting is
-       scored against each one and told which to send:</p>
-    <p class="kw">{% for v in variants %}<code class="hit">{{ v.name }}</code>{% endfor %}</p>
-  {% else %}
-    <p class="hint" style="margin-top:10px">Single version. To keep tailored variants in the same
-       .tex, mark each one with a <span class="mono">%%% VARIANT: Name</span> comment line —
-       anything above the first marker is shared by all of them.</p>
-  {% endif %}
-  <form method="post" action="{{ url_for('upload_resume') }}" enctype="multipart/form-data" class="actions" style="margin-top:10px">
-    <input type="file" name="resume" accept=".tex,.txt,.md,.pdf" style="max-width:320px">
+
+  <form method="post" action="{{ url_for('upload_resume') }}" enctype="multipart/form-data" class="actions" style="margin-top:12px">
+    <input type="file" name="resume" accept=".tex,.txt,.md,.pdf" multiple style="max-width:320px">
     <button class="btn sig" type="submit">Upload and re-rank</button>
   </form>
+  <p class="hint" style="margin-top:8px">Select several files at once. A
+     <span class="mono">main.tex</span> that <span class="mono">\input</span>s one file per version
+     becomes one variant each — include the variant files in the same selection so they resolve.
+     Adding a PDF whose name matches an existing variant (<span class="mono">Spicer-SWE-Resume.pdf</span>
+     → <span class="mono">SWE</span>) attaches it as the file to send and keeps the LaTeX text for matching.</p>
 </div>
 
 <form method="post">
+<input type="hidden" name="form" value="settings">
 
 <div class="panel">
   <h2>You</h2>

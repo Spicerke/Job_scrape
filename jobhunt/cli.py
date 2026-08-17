@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,27 @@ ROOT = Path(__file__).resolve().parent.parent
 def resolve(p: str) -> Path:
     q = Path(p)
     return q if q.is_absolute() else ROOT / q
+
+
+def load_env(path: Path) -> None:
+    """Read KEY=VALUE lines from .env into the environment.
+
+    systemd (EnvironmentFile) and docker-compose already inject these. This is
+    for the case that actually bites: running `python -m jobhunt digest` by hand
+    over SSH, where nothing has sourced the file and the SMTP password is
+    silently absent. Anything already in the environment wins.
+    """
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip().removeprefix("export").strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 # --------------------------------------------------------------------------
@@ -40,17 +62,8 @@ def cmd_init(args, conn):
               f"({sum(1 for c in rows if c.get('target'))} on the watchlist)")
 
     if args.resume:
-        from .matching import DEFAULT_VARIANT, load_resume, load_resume_variants
-        path = resolve(args.resume)
-        text = load_resume(path)
-        variants = load_resume_variants(path)
-        db.set_resume(conn, Path(args.resume).name, text)
-        db.set_resume_variants(conn, variants)
-        conn.commit()
-        print(f"resume loaded ({len(text.split())} words)")
-        named = [n for n, _ in variants if n != DEFAULT_VARIANT]
-        if named:
-            print(f"  {len(named)} variants: {', '.join(named)}")
+        tasks.add_resume_documents(conn, [resolve(r) for r in args.resume],
+                                   log=print)
     elif not db.get_resume(conn):
         print("no resume yet — upload one in the web UI or pass --resume")
 
@@ -217,6 +230,72 @@ def cmd_apps(args, conn):
             print(f"       next: {r['next_action']}{due}")
 
 
+def cmd_resume(args, conn):
+    if args.action == "add":
+        if args.name and len(args.file) > 1:
+            sys.exit("--name takes a single file")
+        added = tasks.add_resume_documents(
+            conn, [resolve(f) for f in args.file], name=args.name, log=print)
+        print(f"{len(added)} variant(s) stored — run `jobhunt score` to re-rank")
+        return
+
+    if args.action == "list":
+        rows = db.get_resume_variants(conn)
+        if not rows:
+            print("no variants — `jobhunt resume add <file>`")
+            return
+        for r in rows:
+            attached = r["file_name"] or "— nothing to send"
+            print(f"{r['id']:>3}  {r['name']:<14} {len(r['text'].split()):>5}w  "
+                  f"{(r['source'] or '?'):<22} {attached}")
+            if r["note"]:
+                print(f"     {r['note']}")
+        return
+
+    if args.action == "remove":
+        row = db.get_resume_variant(conn, args.id)
+        if not row:
+            sys.exit(f"no variant with id {args.id} — `jobhunt resume list`")
+        db.delete_resume_variant(conn, args.id)
+        db.rebuild_resume(conn)
+        conn.commit()
+        print(f"removed '{row['name']}'")
+        return
+
+    if args.action == "attach":
+        row = db.get_resume_variant(conn, args.id)
+        if not row:
+            sys.exit(f"no variant with id {args.id} — `jobhunt resume list`")
+        path = resolve(args.file[0])
+        db.put_resume_variant(conn, row["name"], file_name=path.name,
+                              file_data=path.read_bytes())
+        conn.commit()
+        print(f"'{row['name']}' now sends {path.name}")
+
+
+def cmd_email(args, conn):
+    """Prove the box can actually reach your mail provider."""
+    cfg = config_store.load(conn)
+    email = cfg.get("email", {}) or {}
+    var = email.get("password_env", "JOBHUNT_SMTP_PASSWORD")
+    missing = [k for k in ("smtp_host", "username", "from_addr", "to_addr")
+               if not email.get(k)]
+    if missing:
+        sys.exit(f"email settings incomplete: {', '.join(missing)} — "
+                 "fill them in on the Settings page")
+    if not os.environ.get(var):
+        sys.exit(f"${var} is not set. Put it in {ROOT / '.env'} "
+                 "(Gmail needs an App Password, not your account password).")
+
+    print(f"{email['username']} -> {email['to_addr']} via "
+          f"{email['smtp_host']}:{email['smtp_port']}")
+    html = ("<p>jobhunt is configured correctly. This is the address your "
+            "digests and same-day alerts will arrive at.</p>")
+    emailer.send(cfg, "jobhunt: test message", html,
+                 "jobhunt is configured correctly.")
+    print("sent — check your inbox (and spam, once)")
+
+
 def cmd_backup(args, conn):
     """Consistent copy of the database, safe to run while the daemon is live.
 
@@ -303,9 +382,22 @@ def main(argv=None):
 
     s = sub.add_parser("init", help="create the database, seed settings and boards")
     s.add_argument("--companies", default="companies.yaml")
-    s.add_argument("--resume", help="path to your resume (.tex/.txt/.pdf)")
+    s.add_argument("--resume", nargs="+", metavar="FILE",
+                   help="one or more resumes (.tex/.txt/.pdf); a main.tex that "
+                        "\\inputs variant files expands into one variant each")
     s.add_argument("--reset", action="store_true", help="overwrite settings from config.yaml")
     s.set_defaults(fn=cmd_init)
+
+    s = sub.add_parser("resume", help="manage resume variants")
+    s.add_argument("action", choices=["add", "list", "remove", "attach"])
+    s.add_argument("file", nargs="*", help="file(s) for add/attach")
+    s.add_argument("--name", help="override the variant name (single file only)")
+    s.add_argument("--id", type=int, help="variant id for remove/attach")
+    s.set_defaults(fn=cmd_resume)
+
+    s = sub.add_parser("email", help="check mail delivery works from this machine")
+    s.add_argument("action", choices=["test"])
+    s.set_defaults(fn=cmd_email)
 
     s = sub.add_parser("check-boards", help="verify every company slug resolves")
     s.set_defaults(fn=cmd_check_boards)
@@ -386,6 +478,12 @@ def main(argv=None):
     s.set_defaults(fn=cmd_export)
 
     args = p.parse_args(argv)
+    load_env(ROOT / ".env")
+    if getattr(args, "action", None) in ("add", "attach") and not args.file:
+        p.error(f"`resume {args.action}` needs a file")
+    if getattr(args, "action", None) in ("remove", "attach") and not args.id:
+        p.error(f"`resume {args.action}` needs --id (see `jobhunt resume list`)")
+
     conn = db.connect(args.db)
     try:
         args.fn(args, conn)

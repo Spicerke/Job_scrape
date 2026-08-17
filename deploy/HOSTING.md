@@ -50,20 +50,42 @@ binds to your LAN and you open it from your laptop.
 sudo timedatectl set-timezone America/New_York
 
 sudo apt update && sudo apt install -y python3-pip python3-venv git
-git clone git@github.com:Spicerke/JobFinder.git ~/jobhunt && cd ~/jobhunt
+git clone https://github.com/Spicerke/Job_scrape.git ~/jobhunt && cd ~/jobhunt
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-
-.venv/bin/python -m jobhunt init --resume ~/resume.tex
-.venv/bin/python -m jobhunt check-boards     # fix any wrong slugs first
 ```
 
-Secrets go in `~/jobhunt/.env` (never in the database, never in git):
+### The two things git does not carry
+
+**This repository is public**, so your resumes and your secrets are both
+deliberately excluded from it (see `.gitignore`). Copy them from your laptop
+over SSH instead — this is the whole manual step, and it's once:
 
 ```bash
-JOBHUNT_SMTP_PASSWORD=your-gmail-app-password
+# from the laptop, in the project directory
+scp .env kai@raspberrypi.local:~/jobhunt/.env
+scp -r resumes kai@raspberrypi.local:~/jobhunt/resumes
+```
+
+`.env` holds the secrets and never enters the database:
+
+```bash
+JOBHUNT_SMTP_PASSWORD=your-gmail-app-password   # App Password, not your login
 JOBHUNT_WEB_PASSWORD=something-long
 JOBHUNT_SECRET_KEY=$(openssl rand -hex 32)
 ```
+
+Then load them on the Pi:
+
+```bash
+.venv/bin/python -m jobhunt init --resume resumes/main.tex  # one variant each
+.venv/bin/python -m jobhunt resume add resumes/*.pdf        # what you send
+.venv/bin/python -m jobhunt resume list                     # confirm all three
+.venv/bin/python -m jobhunt check-boards     # fix any wrong slugs first
+```
+
+The PDFs are stored inside the database from that point on, so `jobhunt backup`
+captures them and you don't need to keep `~/jobhunt/resumes` in sync by hand —
+re-copy it only when you re-export from Overleaf.
 
 Then install the service so it starts at boot and restarts on crash:
 
@@ -95,6 +117,9 @@ mapping table. So:
 - `PRAGMA synchronous` is deliberately left at SQLite's default of FULL. Plenty
   of projects drop it to NORMAL for speed, which risks losing recent commits on
   power loss. Don't change it here — the speed is irrelevant at this scale.
+  The database *does* run in WAL mode, which is a separate matter: it's what
+  lets the console stay responsive while a re-score writes, and it does not
+  weaken the durability guarantee that FULL is providing.
 - Shut down with `sudo shutdown -h now` rather than pulling the cord.
 - Cut needless writes by making the systemd journal volatile — it's the other
   thing on a Pi that writes constantly, and you don't need it on disk:

@@ -96,15 +96,21 @@ CREATE TABLE IF NOT EXISTS resume (
     uploaded_at TEXT NOT NULL
 );
 
--- Tailored versions carved out of that one document. `resume.text` stays the
--- whole thing (screening asks "could I apply at all", which any variant can
--- answer); these are what postings get matched against individually.
+-- The tailored versions. `resume.text` is every variant concatenated, because
+-- screening asks "could I apply at all" and a requirement met by any one
+-- version still counts; these rows are what postings are matched against
+-- individually. `file_data` holds the PDF you actually send, so the console
+-- can hand you the right one and a backup carries it too.
 CREATE TABLE IF NOT EXISTS resume_variants (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
     text       TEXT NOT NULL,
     position   INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    note       TEXT,
+    source     TEXT,
+    file_name  TEXT,
+    file_data  BLOB
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -137,8 +143,16 @@ def utcnow() -> str:
 def connect(path: str | Path) -> sqlite3.Connection:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    # The web console, the scheduler, and a hand-run CLI command all reach the
+    # same file at once — on the Pi they're often the same process. WAL keeps
+    # readers working while a re-score writes; busy_timeout makes a competing
+    # writer wait its turn instead of raising "database is locked" instantly.
+    conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    # synchronous stays at FULL on purpose — see the SD-card section of
+    # deploy/HOSTING.md. The speed it would buy is irrelevant at this scale.
     conn.executescript(SCHEMA)
     _migrate(conn)
     conn.executescript(INDEXES)
@@ -160,6 +174,12 @@ def _migrate(conn) -> None:
     for column, decl in (("next_action", "TEXT"), ("next_action_date", "TEXT")):
         if column not in have:
             conn.execute(f"ALTER TABLE applications ADD COLUMN {column} {decl}")
+
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(resume_variants)")}
+    for column, decl in (("note", "TEXT"), ("source", "TEXT"),
+                         ("file_name", "TEXT"), ("file_data", "BLOB")):
+        if column not in have:
+            conn.execute(f"ALTER TABLE resume_variants ADD COLUMN {column} {decl}")
     conn.commit()
 
 
@@ -431,18 +451,81 @@ def get_resume_variants(conn) -> list[sqlite3.Row]:
         "SELECT * FROM resume_variants ORDER BY position, id").fetchall()
 
 
-def set_resume_variants(conn, variants: list[tuple[str, str]]) -> None:
-    """Replace the stored variants wholesale — the .tex upload is the truth."""
-    conn.execute("DELETE FROM resume_variants")
+def get_resume_variant(conn, vid: int):
+    return conn.execute("SELECT * FROM resume_variants WHERE id=?", (vid,)).fetchone()
+
+
+def find_resume_variant(conn, key: str):
+    """Look a variant up by match key, so `SWE` finds `Spicer-SWE-Resume`."""
+    from .matching import variant_key
+    if not key:
+        return None
+    for row in get_resume_variants(conn):
+        if variant_key(row["name"]) == key:
+            return row
+    return None
+
+
+def put_resume_variant(conn, name: str, *, text: str | None = None,
+                       note: str | None = None, source: str | None = None,
+                       file_name: str | None = None,
+                       file_data: bytes | None = None) -> int:
+    """Create or update one variant, leaving unspecified fields alone.
+
+    Matching is by key rather than exact name, so re-adding `Spicer-SWE-Resume.pdf`
+    updates the `SWE` variant instead of sitting beside it as a duplicate.
+    """
+    from .matching import variant_key
+    existing = find_resume_variant(conn, variant_key(name))
     now = utcnow()
-    for i, (name, text) in enumerate(variants):
-        conn.execute(
-            """INSERT INTO resume_variants (name, text, position, updated_at)
-               VALUES (?,?,?,?)
-               ON CONFLICT(name) DO UPDATE SET text=excluded.text,
-                   position=excluded.position, updated_at=excluded.updated_at""",
-            (name, text, i, now),
+
+    if existing is None:
+        nxt = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM resume_variants"
+        ).fetchone()["p"]
+        cur = conn.execute(
+            """INSERT INTO resume_variants
+                   (name, text, position, updated_at, note, source, file_name, file_data)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (name, text or "", nxt, now, note, source, file_name, file_data),
         )
+        return int(cur.lastrowid)
+
+    sets, params = ["updated_at=?"], [now]
+    for column, value in (("name", name), ("text", text), ("note", note),
+                          ("source", source), ("file_name", file_name),
+                          ("file_data", file_data)):
+        if value is not None:
+            sets.append(f"{column}=?")
+            params.append(value)
+    params.append(existing["id"])
+    conn.execute(f"UPDATE resume_variants SET {', '.join(sets)} WHERE id=?", params)
+    return int(existing["id"])
+
+
+def delete_resume_variant(conn, vid: int) -> None:
+    conn.execute("DELETE FROM resume_variants WHERE id=?", (vid,))
+
+
+def clear_resume_variants(conn) -> None:
+    conn.execute("DELETE FROM resume_variants")
+
+
+def rebuild_resume(conn) -> str:
+    """Refresh the combined resume from the variants and return its text.
+
+    Screening reads this one, and a duplicated phrase costs nothing there —
+    it only ever asks whether a requirement appears anywhere in your material.
+    """
+    rows = get_resume_variants(conn)
+    text = "\n\n".join(r["text"] for r in rows if r["text"])
+    if not text:
+        conn.execute("DELETE FROM resume WHERE id=1")
+        return ""
+    sources = list(dict.fromkeys(r["source"] for r in rows if r["source"]))
+    label = ", ".join(sources) if sources else f"{len(rows)} variants"
+    set_resume(conn, label, text)
+    return text
 
 
 def recent_runs(conn, limit: int = 40):

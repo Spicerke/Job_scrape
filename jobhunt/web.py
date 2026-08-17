@@ -6,18 +6,19 @@ an unauthenticated settings page on a public IP is a bad afternoon.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import secrets
+import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
-from flask import (Flask, flash, get_flashed_messages, redirect, render_template,
-                   request, session, url_for)
+from flask import (Flask, abort, flash, get_flashed_messages, redirect,
+                   render_template, request, send_file, session, url_for)
 
 from . import config_store, db, scheduler, tasks
-from .matching import DEFAULT_VARIANT, load_resume, load_resume_variants
 from .sources.ats import ADAPTERS
 
 DB_PATH = os.environ.get("JOBHUNT_DB", str(Path(__file__).resolve().parent.parent / "jobs.db"))
@@ -269,6 +270,12 @@ def settings():
         cfg = config_store.load(c)
         if request.method == "POST":
             f = request.form
+            # Every field here is read with a fallback, so a POST that isn't
+            # actually the settings form reads as "user cleared everything"
+            # and silently wipes months of tuning. The form declares itself.
+            if f.get("form") != "settings":
+                flash("That POST didn't look like the settings form — nothing saved.", "err")
+                return redirect(url_for("settings"))
             cfg["profile"].update({
                 "name": f.get("name", ""),
                 "graduation": f.get("graduation", ""),
@@ -337,44 +344,95 @@ def settings():
         c.close()
 
 
+ALLOWED_RESUME = (".tex", ".txt", ".md", ".pdf")
+
+
 @app.route("/resume", methods=["POST"])
 @protected
 def upload_resume():
-    file = request.files.get("resume")
-    if not file or not file.filename:
+    from werkzeug.utils import secure_filename
+
+    from .matching import split_input_variants
+
+    files = [f for f in request.files.getlist("resume") if f and f.filename]
+    if not files:
         flash("Choose a file first.", "err")
         return redirect(url_for("settings"))
-    suffix = Path(file.filename).suffix.lower()
-    if suffix not in (".tex", ".txt", ".md", ".pdf"):
-        flash("Resume must be .tex, .txt, .md, or .pdf.", "err")
+    bad = [f.filename for f in files
+           if Path(f.filename).suffix.lower() not in ALLOWED_RESUME]
+    if bad:
+        flash(f"Unsupported: {', '.join(bad)}. Use .tex, .txt, .md, or .pdf.", "err")
         return redirect(url_for("settings"))
 
-    tmp = Path("/tmp") / f"resume_upload{suffix}"
-    file.save(tmp)
-    try:
-        text = load_resume(tmp)
-        variants = load_resume_variants(tmp)
-    except Exception as exc:  # noqa: BLE001
-        flash(f"Couldn't read that file: {exc}", "err")
-        return redirect(url_for("settings"))
-    finally:
-        tmp.unlink(missing_ok=True)
+    # Everything lands in one directory under its own name, so a main.tex that
+    # \inputs variant-swe.tex still resolves when you select the whole set.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        saved = []
+        for f in files:
+            dest = Path(tmpdir) / (secure_filename(Path(f.filename).name) or "resume")
+            f.save(dest)
+            saved.append(dest)
 
-    if len(text.strip()) < 120:
-        flash("That file produced almost no text — is it a scanned image?", "err")
-        return redirect(url_for("settings"))
+        included: set[str] = set()
+        for path in saved:
+            if path.suffix.lower() == ".tex":
+                try:
+                    included.update(d["source"] for d in split_input_variants(path))
+                except Exception:  # noqa: BLE001 — fall through to the real read below
+                    pass
+        # A file pulled in by another upload is a fragment, not a resume of
+        # its own; adding it separately would store a variant with no heading.
+        primary = [p for p in saved if p.name not in included]
 
+        c = conn()
+        try:
+            added = tasks.add_resume_documents(c, primary, log=lambda m: None)
+        except Exception as exc:  # noqa: BLE001
+            flash(f"Couldn't read that: {exc}", "err")
+            return redirect(url_for("settings"))
+        finally:
+            c.close()
+
+    thin = [d["name"] for d in added if len(d["text"].split()) < 40]
+    if thin:
+        flash(f"{', '.join(thin)} produced almost no text — a scanned image?", "err")
+
+    tasks.run_in_background("rescoring", _bg_score)
+    names = ", ".join(d["name"] for d in added)
+    flash(f"{len(added)} variant(s) stored: {names}. Re-ranking now.", "ok")
+    return redirect(url_for("settings"))
+
+
+@app.route("/resume/<int:vid>/file")
+@protected
+def resume_file(vid: int):
     c = conn()
     try:
-        db.set_resume(c, file.filename, text)
-        db.set_resume_variants(c, variants)
+        row = db.get_resume_variant(c, vid)
+        if not row or not row["file_data"]:
+            abort(404)
+        name = row["file_name"] or f"{row['name']}.pdf"
+        data = bytes(row["file_data"])
+    finally:
+        c.close()
+    return send_file(io.BytesIO(data), download_name=name, as_attachment=True)
+
+
+@app.route("/resume/<int:vid>/delete", methods=["POST"])
+@protected
+def delete_variant(vid: int):
+    c = conn()
+    try:
+        row = db.get_resume_variant(c, vid)
+        if not row:
+            abort(404)
+        db.delete_resume_variant(c, vid)
+        db.rebuild_resume(c)
         c.commit()
     finally:
         c.close()
     tasks.run_in_background("rescoring", _bg_score)
-    named = [n for n, _ in variants if n != DEFAULT_VARIANT]
-    extra = f" — {len(named)} variants: {', '.join(named)}" if named else ""
-    flash(f"Resume saved ({len(text.split())} words){extra}. Re-ranking now.", "ok")
+    flash(f"Removed '{row['name']}'. Re-ranking now.", "ok")
     return redirect(url_for("settings"))
 
 

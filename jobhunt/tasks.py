@@ -5,11 +5,14 @@ Every entry point goes through here so there is exactly one implementation of
 """
 from __future__ import annotations
 
+import re
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from . import config_store, db, emailer
-from .matching import DEFAULT_VARIANT, Scorer, TfidfIndex, _phrase_present
+from .matching import (DEFAULT_VARIANT, Scorer, TfidfIndex, _phrase_present,
+                       load_resume_documents, name_batch, variant_key)
 from .screening import Screener
 from .sources.ats import ADAPTERS
 from .sources.base import SourceError
@@ -65,6 +68,62 @@ def resume_variants(conn) -> list[tuple[str, str]]:
         return [(r["name"], r["text"]) for r in rows]
     text = resume_text(conn)
     return [(DEFAULT_VARIANT, text)] if text else []
+
+
+# A finished document you'd attach to an application, as opposed to a source
+# file you compile first. PDF only: everything else here either needs
+# compiling or can't be read as text (see load_resume).
+SENDABLE_SUFFIXES = {".pdf"}
+
+
+def _own_name_tokens(conn) -> set[str]:
+    """Your own name, so `Spicer-SWE-Resume.pdf` is just the `SWE` variant."""
+    name = ((config_store.load(conn).get("profile") or {}).get("name")) or ""
+    return {t.lower() for t in re.split(r"[\s._\-]+", name) if t}
+
+
+def add_resume_documents(conn, paths, name: str | None = None,
+                         log=_log) -> list[dict]:
+    """Load one or more resume documents into the variant table.
+
+    A .tex project expands into its variants; a .pdf is one variant and is
+    stored as the file to send. When a PDF matches a variant whose text came
+    from .tex, only the file is attached — the LaTeX source is the cleaner
+    thing to match against, and the PDF is the thing you actually email.
+    """
+    paths = [Path(p) for p in paths]
+    drop = _own_name_tokens(conn)
+    names = ([name] if name and len(paths) == 1
+             else name_batch(paths, drop=drop))
+
+    results = []
+    for path, guess in zip(paths, names):
+        sendable = path.suffix.lower() in SENDABLE_SUFFIXES
+        blob = path.read_bytes() if sendable else None
+        for doc in load_resume_documents(path, name=guess):
+            prior = db.find_resume_variant(conn, variant_key(doc["name"]))
+            keep_text = bool(
+                sendable and prior is not None and prior["source"]
+                and prior["source"] != doc["source"]
+                and prior["source"].lower().endswith(".tex"))
+            db.put_resume_variant(
+                conn, doc["name"],
+                text=None if keep_text else doc["text"],
+                note=None if keep_text else (doc["note"] or None),
+                source=None if keep_text else doc["source"],
+                file_name=path.name if sendable else None,
+                file_data=blob,
+            )
+            results.append({**doc, "attached": path.name if sendable else "",
+                            "text_kept": keep_text})
+            log(f"variant '{doc['name']}': "
+                + (f"attached {path.name}, kept {prior['source']} text" if keep_text
+                   else f"{len(doc['text'].split())} words from {doc['source']}"
+                        + (f", attached {path.name}" if sendable else "")))
+
+    db.rebuild_resume(conn)
+    conn.commit()
+    return results
 
 
 def scrape(conn, ats: str | None = None, company: str | None = None,
@@ -130,7 +189,7 @@ def score(conn, rescore: bool = True, log=_log) -> dict:
     rows = (conn.execute("SELECT * FROM jobs WHERE is_open=1").fetchall()
             if rescore else db.unscored_jobs(conn))
     passed = 0
-    for job in rows:
+    for n, job in enumerate(rows, 1):
         status, reason = screener.screen(
             job["title"], job["description"] or "", job["location"], bool(job["remote"]))
         result = scorer.score(job["title"], job["description"] or "", job["location"] or "")
@@ -138,6 +197,11 @@ def score(conn, rescore: bool = True, log=_log) -> dict:
         result["screen_reason"] = reason
         db.save_scoring(conn, job["id"], result)
         passed += int(status == "pass")
+        # Let go of the write lock periodically. A full re-score is thousands
+        # of rows, and holding one transaction for all of them means every
+        # click in the console times out while it runs.
+        if n % 250 == 0:
+            conn.commit()
     conn.commit()
     log(f"scored {len(rows)} postings — {passed} eligible, {len(rows)-passed} filtered")
     return {"scored": len(rows), "passed": passed}

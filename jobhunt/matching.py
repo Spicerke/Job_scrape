@@ -59,6 +59,11 @@ def load_resume(path: str | Path) -> str:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"resume not found: {path}")
+    if path.suffix.lower() in (".docx", ".doc", ".pages", ".rtf"):
+        # Reading these as text yields binary noise that would quietly poison
+        # every score, so refuse rather than pretend it worked.
+        raise RuntimeError(
+            f"{path.suffix} isn't readable as text — export it to PDF first")
     if path.suffix.lower() == ".tex":
         return _strip_tex(path.read_text(encoding="utf-8", errors="ignore"))
     if path.suffix.lower() == ".pdf":
@@ -76,10 +81,17 @@ def load_resume(path: str | Path) -> str:
 # --------------------------------------------------------------------------
 # resume variants
 #
-# One .tex file, several tailored versions of the same resume. Each posting is
-# scored against every variant and told which one to send. Anything before the
-# first marker (contact block, skills, education) is shared by all of them, so
-# a variant only contains what actually differs.
+# Several tailored versions of the same resume. Each posting is scored against
+# every variant and told which one to send. Three project layouts are
+# recognised, in the order a document is tested for them:
+#
+#   1. \input{variant-swe}      one file per version, pulled into a shared
+#                               main.tex — the Overleaf layout
+#   2. %%% VARIANT: Name        markers inside a single file
+#   3. \begin{variant}{Name}    environments inside a single file
+#
+# Whatever is shared (contact block, education, formatting) is prepended to
+# each version, so a variant only carries what actually differs.
 # --------------------------------------------------------------------------
 
 # %%% VARIANT: Machine Learning   <- a LaTeX comment, so pdflatex ignores it
@@ -88,12 +100,140 @@ _VARIANT_MARKER = re.compile(r"^[ \t]*%+[ \t]*VARIANT[ \t]*:[ \t]*(.+?)[ \t]*$",
 # \begin{variant}{Machine Learning} ... \end{variant}
 _VARIANT_ENV = re.compile(
     r"\\begin\{variant\}\s*\{([^}]*)\}(.*?)\\end\{variant\}", re.DOTALL)
+# \input{variant-swe} and %\input{variant-ml} alike — see split_input_variants.
+_TEX_INPUT = re.compile(
+    r"^[ \t]*%*[ \t]*\\(?:input|include)\{([^}]+)\}[ \t]*$", re.MULTILINE)
 
 DEFAULT_VARIANT = "default"
 
+# Words in a filename that describe the file rather than the version it holds.
+_GENERIC_TOKENS = {
+    "resume", "resumes", "cv", "variant", "variants", "version", "ver",
+    "final", "draft", "copy", "latest", "new", "updated", "current",
+    "main", "master", "doc", "document", "the",
+}
+_VERSION_TOKEN = re.compile(r"^v?\d+(?:\.\d+)*$|^(?:19|20)\d{2}$")
+_SPLIT_TOKENS = re.compile(r"[\s._\-]+")
+
+
+def _tokens(stem: str) -> list[str]:
+    return [t for t in _SPLIT_TOKENS.split(str(stem)) if t]
+
+
+def _pretty(token: str) -> str:
+    """SWE stays SWE, swe becomes SWE, research becomes Research."""
+    if token.isupper():
+        return token
+    return token.upper() if len(token) <= 3 else token[0].upper() + token[1:]
+
+
+def variant_name(stem: str, drop: set[str] | frozenset[str] = frozenset()) -> str:
+    """Turn a filename stem into a variant name: `variant-swe` -> `SWE`."""
+    drop = {d.lower() for d in drop}
+    toks = _tokens(Path(stem).stem)
+    kept = [t for t in toks if t.lower() not in _GENERIC_TOKENS
+            and t.lower() not in drop and not _VERSION_TOKEN.match(t.lower())]
+    return " ".join(_pretty(t) for t in (kept or toks)) or DEFAULT_VARIANT
+
+
+def variant_key(name: str) -> str:
+    """Match key for a name. `SWE`, `swe`, and `Spicer-SWE-Resume` all agree."""
+    toks = [t for t in _tokens(name)
+            if t.lower() not in _GENERIC_TOKENS and not _VERSION_TOKEN.match(t.lower())]
+    return "".join(re.sub(r"[^a-z0-9]", "", t.lower()) for t in (toks or _tokens(name)))
+
+
+def name_batch(paths: list[str | Path],
+               drop: set[str] | frozenset[str] = frozenset()) -> list[str]:
+    """Name several files at once, dropping what every one of them shares.
+
+    `Spicer-SWE-Resume.pdf`, `Spicer-ML-Resume.pdf`, `Spicer-Research-Resume.pdf`
+    become `SWE`, `ML`, `Research` — "Spicer" is common to all three and so
+    says nothing about which version you're looking at. `drop` adds tokens to
+    discard regardless, which is how your own name goes when you add one file
+    on its own and there's no batch to compare it against.
+    """
+    stems = [Path(p).stem for p in paths]
+    sets = [{t.lower() for t in _tokens(s)} for s in stems]
+    baseline = {d.lower() for d in drop}
+    common = (set.intersection(*sets) if len(sets) > 1 else set()) | baseline
+
+    def survives(stem: str, banned: set[str]) -> list[str]:
+        return [t for t in _tokens(stem) if t.lower() not in banned
+                and t.lower() not in _GENERIC_TOKENS
+                and not _VERSION_TOKEN.match(t.lower())]
+
+    # Back off if the shared part would swallow one of the names whole.
+    if any(not survives(s, common) for s in stems):
+        common = baseline
+    return [variant_name(s, common) for s in stems]
+
+
+def _resolve_input(base: Path, target: str) -> Path | None:
+    for candidate in (target, f"{target}.tex"):
+        p = base / candidate
+        if p.is_file():
+            return p
+    return None
+
+
+_RULE_LINE = re.compile(r"^[\s=\-*_~#]*$")
+
+
+def _leading_note(src: str) -> str:
+    """First real line of a file's opening comment block, used as a caption."""
+    for line in src.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not stripped.startswith("%"):
+            break
+        text = stripped.lstrip("%").strip()
+        if len(text) > 3 and not _RULE_LINE.match(text):
+            return re.sub(r"\s+", " ", text)
+    return ""
+
+
+def split_input_variants(path: Path) -> list[dict]:
+    """Variants from a one-file-per-version project.
+
+    main.tex holds the preamble, contact block, and education, then \\inputs a
+    single variant file at the bottom with the others commented out.
+    Commented-out inputs are collected too: they're the versions you aren't
+    compiling right now, not versions you deleted.
+    """
+    src = path.read_text(encoding="utf-8", errors="ignore")
+    body_at = src.find(r"\begin{document}")
+
+    hits = []
+    for m in _TEX_INPUT.finditer(src):
+        # Preamble helpers such as \input{glyphtounicode} are not variants.
+        if body_at != -1 and m.start() < body_at:
+            continue
+        target = _resolve_input(path.parent, m.group(1).strip())
+        if target and target != path:
+            hits.append((m, target))
+    if not hits:
+        return []
+
+    cut, shared = 0, []
+    for m, _ in hits:
+        shared.append(src[cut:m.start()])
+        cut = m.end()
+    shared.append(src[cut:])
+    base = "".join(shared)
+
+    names = name_batch([t for _, t in hits])
+    out = []
+    for (_, target), name in zip(hits, names):
+        body = target.read_text(encoding="utf-8", errors="ignore")
+        out.append({"name": name, "text": _strip_tex(base + "\n" + body),
+                    "note": _leading_note(body), "source": target.name})
+    return out
+
 
 def split_variants(src: str) -> list[tuple[str, str]]:
-    """Split a resume source into [(variant_name, plain_text), ...].
+    """Split a single-file resume source into [(variant_name, plain_text), ...].
 
     Recognises `%%% VARIANT: Name` comment markers and `\\begin{variant}{Name}`
     environments. A document using neither comes back as a single variant, so
@@ -119,14 +259,36 @@ def split_variants(src: str) -> list[tuple[str, str]]:
     return [(DEFAULT_VARIANT, _strip_tex(src))]
 
 
-def load_resume_variants(path: str | Path) -> list[tuple[str, str]]:
-    """Variant split for .tex sources; everything else is a single variant."""
+def load_resume_documents(path: str | Path, name: str | None = None) -> list[dict]:
+    """Every variant a single uploaded document yields.
+
+    Returns [{"name", "text", "note", "source"}, ...]. A .tex may produce
+    several; a .pdf or .txt is always exactly one, named after its filename.
+    """
     path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"resume not found: {path}")
+
     if path.suffix.lower() == ".tex":
-        if not path.exists():
-            raise FileNotFoundError(f"resume not found: {path}")
-        return split_variants(path.read_text(encoding="utf-8", errors="ignore"))
-    return [(DEFAULT_VARIANT, load_resume(path))]
+        inputs = split_input_variants(path)
+        if inputs:
+            return inputs
+        src = path.read_text(encoding="utf-8", errors="ignore")
+        found = split_variants(src)
+        if len(found) > 1:
+            return [{"name": n, "text": t, "note": "", "source": path.name}
+                    for n, t in found]
+        text, note = found[0][1], _leading_note(src)
+    else:
+        text, note = load_resume(path), ""
+
+    return [{"name": name or variant_name(path.stem), "text": text,
+             "note": note, "source": path.name}]
+
+
+def load_resume_variants(path: str | Path) -> list[tuple[str, str]]:
+    """Name/text pairs for one document — the shape the Scorer wants."""
+    return [(d["name"], d["text"]) for d in load_resume_documents(path)]
 
 
 # --------------------------------------------------------------------------

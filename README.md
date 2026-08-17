@@ -31,7 +31,8 @@ scheduled runs and the UI can never disagree about what you're looking for.
 
 ```bash
 pip install -r requirements.txt
-python -m jobhunt init --resume /path/to/resume.tex
+python -m jobhunt init --resume resumes/main.tex   # one variant per version
+python -m jobhunt resume add resumes/*.pdf         # the files you actually send
 python -m jobhunt check-boards     # verify the seeded company slugs
 python -m jobhunt scrape           # first pull
 python -m jobhunt web              # console at http://127.0.0.1:8000
@@ -61,43 +62,73 @@ apply.workable.com/SLUG         jobs.smartrecruiters.com/SLUG
   means "email me the moment they post".
 - **Activity** — per-board pull history, so a silently broken slug is visible.
 
-Resume upload is on the Settings page. It accepts `.tex`, `.txt`, `.md`, or
-`.pdf`, extracts the text, and re-ranks everything automatically.
+Resume upload is on the Settings page. It accepts `.tex`, `.txt`, `.md`,
+`.pdf`, takes several files at once, and re-ranks automatically.
 
-## Several resumes in one .tex
+## Several resumes
 
-If you keep tailored versions of your resume, mark each one with a
-`%%% VARIANT: Name` comment. It's a LaTeX comment, so `pdflatex` ignores it and
-the file still compiles exactly as before:
+Keep a tailored version per kind of role and the app scores each posting
+against all of them, then tells you which to send. Three project layouts are
+recognised, and you don't have to restructure anything to use one.
+
+**One file per version** — the Overleaf layout, and what this repo uses.
+`main.tex` holds the preamble, contact block, and education, then `\input`s a
+single variant with the rest commented out:
 
 ```latex
-\begin{document}
-\textbf{Kai Spicer} \\ Columbia University, BS Computer Science 2027
-\section{Skills} Python, Java, SQL, Git, Docker
-
-%%% VARIANT: Machine Learning
-\section{Experience}
-  \item Graph neural networks in PyTorch for molecular property prediction
-
-%%% VARIANT: Backend
-\section{Experience}
-  \item Scaled a Flask/Postgres API to 2M requests a day
-
-%%% VARIANT: Research
-\section{Publications}
-  \item Information retrieval and embeddings, NeurIPS workshop
+%\input{variant-ml}
+%\input{variant-research}
+\input{variant-swe}
 ```
 
-Everything **above the first marker is shared** by all variants — contact
-block, education, skills — so a variant holds only what actually differs.
-`\begin{variant}{Name} … \end{variant}` works too, and a resume with no markers
-is treated as a single variant, exactly as before.
+All three become variants. **Commented-out inputs count** — they're the
+versions you aren't compiling right now, not versions you deleted. Point the
+app at `main.tex` alone and it follows the includes:
+
+```bash
+python -m jobhunt resume add resumes/main.tex
+```
+
+**Markers in a single file** — `%%% VARIANT: Name`, a LaTeX comment, so
+`pdflatex` ignores it and the file compiles unchanged. Everything above the
+first marker is shared. `\begin{variant}{Name} … \end{variant}` works too.
+
+**Separate documents** — three PDFs, three `.tex` files, whatever. Each is one
+variant, named from its filename with the parts common to all of them removed,
+so `Spicer-SWE-Resume.pdf`, `Spicer-ML-Resume.pdf`, and
+`Spicer-Research-Resume.pdf` become `SWE`, `ML`, and `Research`.
+
+A resume with none of this is a single variant, exactly as before.
+
+### The PDF you actually send
+
+Variants carry two things: the **text** they're matched on and the **file** you
+attach to an application. Add a PDF whose name matches an existing variant and
+it attaches as that variant's file while the LaTeX text is kept for matching —
+`.tex` is the cleaner source of tokens, the PDF is the thing you email:
+
+```bash
+$ python -m jobhunt resume add resumes/Spicer-SWE-Resume.pdf
+variant 'SWE': attached Spicer-SWE-Resume.pdf, kept variant-swe.tex text
+```
+
+Re-export from Overleaf and re-run that line; nothing else changes. The files
+live in the database, so `jobhunt backup` captures them and the Settings page
+hands you the right one on a click.
+
+```
+$ python -m jobhunt resume list
+  1  ML               443w  variant-ml.tex         Spicer-ML-Resume.pdf
+     ML ENGINEER -- your primary version, send this most often
+  2  Research         440w  variant-research.tex   Spicer-Research-Resume.pdf
+  3  SWE              409w  variant-swe.tex        Spicer-SWE-Resume.pdf
+```
 
 Every posting is then scored against every variant and told which one to send:
 
 ```
 79.8  Machine Learning Intern   DreamCo
-      send the 'Machine Learning' resume — Machine Learning 80, Research 61, Backend 58
+      send the 'ML' resume — ML 80, Research 61, SWE 58
 ```
 
 The winner is whichever variant scores highest. Only the TF-IDF arm moves
@@ -234,15 +265,31 @@ Three environment variables, none of them stored in the database:
 | `JOBHUNT_WEB_PASSWORD` | Login for the console |
 | `JOBHUNT_SECRET_KEY` | Signs session cookies; keeps you logged in across restarts |
 
+Put them in `.env` at the project root. systemd and docker-compose inject that
+file themselves; the CLI also reads it directly, so `python -m jobhunt digest`
+run by hand over SSH has the SMTP password too. Anything already exported in
+the environment wins.
+
 The app **refuses to bind to a non-localhost interface without
 `JOBHUNT_WEB_PASSWORD` set**. The settings page holds your email address and
 SMTP username; it shouldn't be open to the internet.
+
+`.env` and your resumes are both gitignored. If you host this repo publicly,
+keep it that way — a resume carries your phone number and personal email. Copy
+both to the Pi with `scp`; see `deploy/HOSTING.md`.
+
+Once you have a Gmail App Password, confirm the machine can actually send:
+
+```bash
+python -m jobhunt email test
+```
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `init` | Create the database, seed settings, boards, and resume |
+| `init` | Create the database, seed settings, boards, and resumes |
+| `resume add / list / remove / attach` | Manage resume variants and the PDF each one sends |
 | `check-boards` | Verify every company slug resolves |
 | `scrape` | Pull all boards and re-rank |
 | `run` | scrape + score + alerts — what cron calls each morning |
@@ -256,6 +303,7 @@ SMTP username; it shouldn't be open to the internet.
 | `backup` | Consistent snapshot, safe while the daemon runs. `--to`, `--keep` |
 | `stats` | Counts and the top reasons jobs are being filtered |
 | `config show / export / import` | Move settings between YAML and the database |
+| `email test` | Send yourself one message to prove SMTP works from this box |
 
 ## Tuning
 

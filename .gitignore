@@ -1,4 +1,4 @@
-# the database — contains your postings, settings, and resume text
+# the database — postings, settings, resume text, and the resume PDFs
 *.db
 *.db-wal
 *.db-shm
@@ -6,9 +6,13 @@
 # secrets
 .env
 
-# your actual resume; drop the ignore line if you want it versioned
+# Your actual resumes. These carry your phone number, personal email, and
+# LinkedIn, and this repo is public — keep them out of it. Copy them to the
+# Pi with scp instead (see deploy/HOSTING.md), the same way .env gets there.
+resumes/
 resume.tex
 resume.pdf
+*-Resume.pdf
 
 __pycache__/
 *.py[cod]

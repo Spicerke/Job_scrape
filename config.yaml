@@ -7,9 +7,12 @@
 
 profile:
   name: Kai Spicer
-  # .tex, .txt, or .pdf (PDF needs `pip install pypdf`)
-  resume_path: resume.tex
   graduation: 2027-05
+  # Resumes are not configured here — they live in the database so the web UI
+  # and cron can't disagree. Load them with:
+  #   jobhunt resume add resumes/main.tex          # one variant per \input
+  #   jobhunt resume add resumes/*.pdf             # the files you actually send
+  # and inspect with `jobhunt resume list`.
 
 search:
   # Titles you actually want. A full phrase match scores 1.0; partial word
